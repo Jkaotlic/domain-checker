@@ -22,7 +22,9 @@ import { normalizeDomain, isValidHost } from "./subdomain";
 const DEFAULT_DNS_TIMEOUT_MS = 3000; // 3s for PTR
 const DEFAULT_HTTP_TIMEOUT_MS = 5000; // 5s for HTTP fallback
 const DEFAULT_CONCURRENCY = 20;
-const CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour cache for reverse results
+const CACHE_TTL_MS = 1000 * 60 * 60; // default 1 hour cache for reverse results
+const PTR_TTL_MS = 1000 * 60 * 5; // 5 minutes for live PTR
+const CRTSH_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours for crt.sh results
 
 const cache = createDefaultCache<string[]>();
 
@@ -52,7 +54,12 @@ export async function reverseLookup(
       })
       .filter(Boolean) as string[];
     const valid = normalized.filter((h) => isValidHost(h));
-    if (valid.length) return Array.from(new Set(valid));
+    if (valid.length) {
+      try {
+        await cache.set(`reverse:${ip}`, Array.from(new Set(valid)), PTR_TTL_MS);
+      } catch {}
+      return Array.from(new Set(valid));
+    }
   } catch (err: any) {
     // dns reverse failed or timed out — log and continue to fallback
     logger.debug({ err, ip }, "PTR lookup failed or timed out, will try fallback");
@@ -76,10 +83,59 @@ export async function reverseLookup(
         for (const d of extractDomainsFromText(maybeNV)) candidates.add(d);
       }
     }
-    return Array.from(candidates).filter((h) => isValidHost(h));
+    const list = Array.from(candidates).filter((h) => isValidHost(h));
+    try {
+      await cache.set(`reverse:${ip}`, list, CRTSH_TTL_MS);
+    } catch {}
+    return list;
   } catch (err: any) {
     logger.debug({ err, ip }, "crt.sh fallback failed");
     return [];
+  }
+}
+
+/**
+ * Resolve A, AAAA and CNAME for a host with timeout and return combined results.
+ */
+export async function resolveHostDetails(
+  host: string,
+  opts?: { timeoutMs?: number }
+): Promise<{ a: string[]; aaaa: string[]; cnames: string[] }> {
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
+  const res: { a: string[]; aaaa: string[]; cnames: string[] } = { a: [], aaaa: [], cnames: [] };
+  try {
+    const a = await withTimeout(dns.resolve4(host), timeoutMs).catch(() => [] as string[]);
+    res.a = Array.isArray(a) ? a : [];
+  } catch {}
+  try {
+    const aaaa = await withTimeout(dns.resolve6(host), timeoutMs).catch(() => [] as string[]);
+    res.aaaa = Array.isArray(aaaa) ? aaaa : [];
+  } catch {}
+  try {
+    const cn = await withTimeout(dns.resolveCname(host), timeoutMs).catch(() => [] as string[]);
+    res.cnames = Array.isArray(cn) ? cn : [];
+  } catch {}
+  return res;
+}
+
+/**
+ * Detect whether a domain uses wildcard DNS by resolving a random label and comparing IPs.
+ */
+export async function detectWildcard(domain: string): Promise<boolean> {
+  try {
+    const rnd = `x-${Math.random().toString(36).slice(2, 8)}`;
+    const testHost = `${rnd}.${domain}`;
+    const [base, test] = await Promise.all([resolveHostDetails(domain), resolveHostDetails(testHost)]);
+    const baseIps = new Set([...base.a, ...base.aaaa]);
+    const testIps = new Set([...test.a, ...test.aaaa]);
+    if (testIps.size === 0) return false;
+    // if every test IP is present in base IPs, it's likely wildcard (or authoritative mapping)
+    for (const ip of testIps) {
+      if (!baseIps.has(ip)) return false;
+    }
+    return true;
+  } catch (err) {
+    return false;
   }
 }
 
