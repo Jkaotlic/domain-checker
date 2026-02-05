@@ -1,0 +1,43 @@
+@echo off
+chcp 65001 >nul
+cls
+
+echo 🚀 Запуск Domain Checker...
+echo.
+
+REM Проверка Node.js
+where node >nul 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo ❌ Node.js не установлен!
+    echo Установите Node.js с https://nodejs.org/
+    pause
+    exit /b 1
+)
+
+for /f "tokens=*" %%i in ('node -v') do set NODE_VERSION=%%i
+for /f "tokens=*" %%i in ('npm -v') do set NPM_VERSION=%%i
+
+echo ✓ Node.js %NODE_VERSION%
+echo ✓ npm %NPM_VERSION%
+echo.
+
+REM Проверка зависимостей
+if not exist "node_modules" (
+    echo 📦 Установка зависимостей...
+    call npm install
+    if %ERRORLEVEL% NEQ 0 (
+        echo ❌ Ошибка при установке зависимостей
+        pause
+        exit /b 1
+    )
+    echo.
+)
+
+REM Запуск приложения
+echo 🌐 Запуск сервера разработки...
+echo 📍 Приложение будет доступно по адресу: http://localhost:3000
+echo.
+echo Нажмите Ctrl+C для остановки сервера
+echo.
+
+call npm run dev
