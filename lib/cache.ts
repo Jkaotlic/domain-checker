@@ -13,14 +13,19 @@ export interface CacheAdapter<K = CacheKey, V = unknown> {
  * Simple in-memory LRU adapter using `lru-cache`.
  */
 export class InMemoryLRUAdapter<V = unknown> implements CacheAdapter {
-  private cache: LRU<string, V>;
+  private cache: any;
 
-  constructor(opts?: LRU.Options<string, V>) {
-    this.cache = new LRU<string, V>({
+  constructor(opts?: any) {
+    // Support both old (`maxAge`) and new (`ttl`) lru-cache option names by
+    // providing both keys where applicable. Older versions will use `maxAge`,
+    // newer versions will use `ttl`.
+    const defaultOpts: any = {
       max: 5000,
-      ttl: 1000 * 60 * 60, // 1 hour default
+      ttl: 1000 * 60 * 60, // 1 hour default (for newer lru-cache)
+      maxAge: 1000 * 60 * 60, // 1 hour default (for older lru-cache)
       ...(opts || {}),
-    });
+    };
+    this.cache = new LRU(defaultOpts as any);
   }
 
   async get(key: string): Promise<V | undefined> {
@@ -29,14 +34,40 @@ export class InMemoryLRUAdapter<V = unknown> implements CacheAdapter {
 
   async set(key: string, value: V, ttlMillis?: number): Promise<void> {
     if (typeof ttlMillis === "number") {
-      this.cache.set(key, value, { ttl: ttlMillis });
+      // Try the modern API first (options object with `ttl`). If that fails
+      // (older lru-cache expects a numeric `maxAge` as 3rd arg), fall back.
+      try {
+        // modern: set(key, value, { ttl: ttlMillis })
+        // some older versions accept set(key, value, maxAge)
+        // try both patterns for compatibility.
+        // @ts-ignore runtime compatibility
+        this.cache.set(key, value, { ttl: ttlMillis });
+      } catch (e) {
+        try {
+          // older API: numeric maxAge as third argument
+          // @ts-ignore
+          this.cache.set(key, value, ttlMillis);
+        } catch (e2) {
+          // last resort: try passing maxAge inside object
+          // @ts-ignore
+          this.cache.set(key, value, { maxAge: ttlMillis });
+        }
+      }
     } else {
       this.cache.set(key, value);
     }
   }
 
   async del(key: string): Promise<void> {
-    this.cache.delete(key);
+    // Support different lru-cache API method names across versions.
+    const anyCache: any = this.cache as any;
+    if (typeof anyCache.delete === 'function') {
+      anyCache.delete(key);
+    } else if (typeof anyCache.del === 'function') {
+      anyCache.del(key);
+    } else if (typeof anyCache.remove === 'function') {
+      anyCache.remove(key);
+    }
   }
 }
 

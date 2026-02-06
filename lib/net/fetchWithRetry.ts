@@ -100,12 +100,7 @@ async function resolveFetch() {
     _cachedFetch = (globalThis as any).fetch.bind(globalThis);
     return _cachedFetch;
   }
-  try {
-    const mod = await import('node-fetch');
-    // node-fetch v3 exports default
-    _cachedFetch = mod.default ?? mod;
-    return _cachedFetch;
-  } catch (e) {
-    throw new Error('fetch is not available. Install node-fetch or use a Node runtime with global fetch');
-  }
+  // Prefer using the runtime-provided global `fetch` (Next.js / Node 18+).
+  // Avoid bundling `node-fetch` to keep Turbopack/Next.js resolution simple.
+  throw new Error('fetch is not available in this runtime. Ensure Node 18+ or Next.js provides global `fetch`.');
 }

@@ -24,6 +24,7 @@
     "ci": "npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {
+    "node-fetch": "^3.3.2",
     "ioredis": "^5.3.2",
     "next": "16.1.6",
     "p-timeout": "^7.0.1",
