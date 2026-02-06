@@ -1,4 +1,3 @@
-import fetch, { RequestInit, Response } from 'node-fetch';
 import pLimit from 'p-limit';
 import { CONFIG } from '../config';
 import logger from '../logger';
@@ -38,13 +37,14 @@ export async function fetchWithRetry(url: string, init?: RequestInit, opts?: Fet
 }
 
 async function execWithRetry(url: string, init: RequestInit | undefined, cfg: { retries: number; base: number; timeoutMs: number; }) {
+  const fetchFn = await resolveFetch();
   let attempt = 0;
   while (true) {
     attempt++;
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), cfg.timeoutMs);
     try {
-      const res = await fetch(url, { ...(init || {}), signal: controller.signal });
+      const res = await fetchFn(url, { ...(init || {}), signal: controller.signal } as any);
       clearTimeout(id);
       if (res.status === 429) {
         // rate limited - respect Retry-After if present
@@ -91,4 +91,21 @@ function parseRetryAfter(val: string): number {
   const t = Date.parse(val);
   if (!Number.isNaN(t)) return Math.max(0, t - Date.now());
   return 1000;
+}
+
+let _cachedFetch: any | null = null;
+async function resolveFetch() {
+  if (_cachedFetch) return _cachedFetch;
+  if ((globalThis as any).fetch) {
+    _cachedFetch = (globalThis as any).fetch.bind(globalThis);
+    return _cachedFetch;
+  }
+  try {
+    const mod = await import('node-fetch');
+    // node-fetch v3 exports default
+    _cachedFetch = mod.default ?? mod;
+    return _cachedFetch;
+  } catch (e) {
+    throw new Error('fetch is not available. Install node-fetch or use a Node runtime with global fetch');
+  }
 }
