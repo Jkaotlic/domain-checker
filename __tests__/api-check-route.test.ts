@@ -4,7 +4,7 @@ jest.mock('next/server', () => ({
   },
 }));
 
-import { POST } from '../../app/api/check/route';
+import { POST } from '../app/api/check/route';
 
 describe('app/api/check/route', () => {
   test('returns 400 for missing domain', async () => {

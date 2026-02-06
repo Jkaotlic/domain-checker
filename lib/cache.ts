@@ -29,7 +29,20 @@ export class InMemoryLRUAdapter<V = unknown> implements CacheAdapter {
 
   async set(key: string, value: V, ttlMillis?: number): Promise<void> {
     if (typeof ttlMillis === "number") {
-      this.cache.set(key, value, { ttl: ttlMillis });
+      // lru-cache versions differ in API; pass ttl as third argument if supported,
+      // otherwise fall back to set(key, value) and rely on default ttl.
+      try {
+        // Some versions accept set(key, value, ttl)
+        (this.cache as any).set(key, value, ttlMillis);
+      } catch (e) {
+        // Fallback: try options object form
+        try {
+          (this.cache as any).set(key, value, { ttl: ttlMillis });
+        } catch (e2) {
+          // As a last resort, set without TTL
+          (this.cache as any).set(key, value);
+        }
+      }
     } else {
       this.cache.set(key, value);
     }

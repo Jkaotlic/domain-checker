@@ -1,4 +1,3 @@
-import fetch, { RequestInit, Response } from 'node-fetch';
 import pLimit from 'p-limit';
 import { CONFIG } from '../config';
 import logger from '../logger';
@@ -44,7 +43,13 @@ async function execWithRetry(url: string, init: RequestInit | undefined, cfg: { 
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), cfg.timeoutMs);
     try {
-      const res = await fetch(url, { ...(init || {}), signal: controller.signal });
+      // Use runtime-provided global `fetch` when available (Node 18+ / Next.js).
+      // Avoid importing ESM-only `node-fetch` which causes Jest/transform issues.
+      const runtimeFetch = (globalThis as any).fetch;
+      if (typeof runtimeFetch !== 'function') {
+        throw new Error('fetch is not available in this runtime. Ensure Node 18+ or Next.js provides global fetch');
+      }
+      const res = await runtimeFetch(url, { ...(init || {}), signal: controller.signal });
       clearTimeout(id);
       if (res.status === 429) {
         // rate limited - respect Retry-After if present

@@ -4,7 +4,7 @@ jest.mock('next/server', () => ({
   },
 }));
 
-import { POST } from '../../app/api/reverse/route';
+import { POST } from '../app/api/reverse/route';
 
 describe('app/api/reverse/route', () => {
   test('returns 400 for missing text', async () => {
