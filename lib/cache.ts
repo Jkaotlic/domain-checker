@@ -49,7 +49,14 @@ export class InMemoryLRUAdapter<V = unknown> implements CacheAdapter {
   }
 
   async del(key: string): Promise<void> {
-    this.cache.delete(key);
+    // Support multiple lru-cache API variants: delete, del, or remove
+    if (typeof (this.cache as any).delete === 'function') {
+      (this.cache as any).delete(key);
+    } else if (typeof (this.cache as any).del === 'function') {
+      (this.cache as any).del(key);
+    } else if (typeof (this.cache as any).remove === 'function') {
+      (this.cache as any).remove(key);
+    }
   }
 }
 

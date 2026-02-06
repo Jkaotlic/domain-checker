@@ -4,10 +4,13 @@
  * Small stubs for passive data source integrations (crt.sh already in reverse.ts).
  * Implementations here should be small wrappers that fetch and normalize results.
  */
-export { default as fetchSecurityTrails } from './sources/securitytrails';
-export { default as fetchURLScan } from './sources/urlscan';
-export { default as fetchHackerTarget } from './sources/hackertarget';
-export { default as fetchAlienVault } from './sources/alienvault';
+import fetchSecurityTrails from './sources/securitytrails';
+import fetchURLScan from './sources/urlscan';
+import fetchHackerTarget from './sources/hackertarget';
+import fetchAlienVault from './sources/alienvault';
+
+export { fetchSecurityTrails, fetchURLScan, fetchHackerTarget, fetchAlienVault };
+
 export async function getFromSecurityTrails(domain: string) { return fetchSecurityTrails(domain); }
 export async function getFromURLScan(domain: string) { return fetchURLScan(domain); }
 export async function getFromHackertarget(domain: string) { return fetchHackerTarget(domain); }
