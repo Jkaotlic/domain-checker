@@ -1,64 +1,73 @@
 # Domain Checker
 
-Domain Checker is a focused Next.js API service to validate domains, normalize and score subdomains, and perform reverse subdomain lookups. It emphasizes correctness, test coverage, and a small, composable core with optional Redis-backed caching for shared state.
+Domain Checker — лёгкий сервис на Next.js для валидации доменов, нормализации и оценки поддоменов, а также для обратного анализа (reverse lookup) по IP и хостам. Проект ориентирован на корректность, покрытие тестами и компактное, компонуемое ядро с опциональным кэшем на Redis для общего состояния.
 
-## Highlights
-- Fast domain and subdomain validation and scoring
-- Reverse subdomain tokenization and normalization
-- In-memory LRU cache with optional Redis adapter
-- TypeScript + Jest tests, small and audit-friendly codebase
+## Основные возможности
+- Быстрая валидация и оценка доменов и поддоменов
+- Reverse DNS lookup по спискам IP, извлечённым из произвольного текста
+- LRU-кеш в памяти с опциональным адаптером для Redis
+- TypeScript + Jest: тесты маленькие и удобные для аудита
 
-## Quickstart
+## Быстрый старт
 
-### Prerequisites
+### Требования
 - Node.js 18+ (LTS)
 - npm
-- Optional: Redis (for shared caching)
+- Необязательно: Redis (при использовании общего кэша)
 
-### Install
+### Установка
 
 ```bash
 npm ci
 ```
 
-### Run (development)
+### Запуск в режиме разработки
 
 ```bash
 npm run dev
 ```
 
-### Build and run (production)
+### Сборка и запуск в продакшн
 
 ```bash
 npm run build
 npm start
 ```
 
-### Test
+### Тесты
 
 ```bash
 npm test
 ```
 
-## Configuration (environment variables)
+## Конфигурация (переменные окружения)
 
-- `REDIS_URL` — optional. When set, the app uses Redis for caching and rate limits.
-- `REDIS_PASSWORD` — optional Redis password.
-- `LOG_LEVEL` — optional logging level (defaults to `info`).
-- `NODE_ENV` — `development` or `production`.
-- `PORT` — optional port for production server.
+- `REDIS_URL` — опционально. При заданной переменной приложение попытается подключиться к Redis (используется `ioredis`). При недоступности Redis выполняется fallback на встроенный LRU-кеш в памяти.
+- `REDIS_PASSWORD` — пароль Redis (опционально).
+- `SECURITYTRAILS_APIKEY` — API-ключ для SecurityTrails (используется в `lib/sources/securitytrails.ts`).
+- `LOG_LEVEL` — уровень логирования (по умолчанию `info`).
+- `NODE_ENV` — `development` или `production`.
+- `PORT` — порт для сервера в продакшн.
 
-If `REDIS_URL` is not provided the app falls back to an in-process LRU cache implementation.
+Дополнительные настройки (таймауты / TTL / concurrency) настраиваются в `lib/config.ts` и могут быть переопределены через env:
 
-## API Endpoints
+- `HTTP_TIMEOUT_MS` (по умолчанию ~5000)
+- `DNS_TIMEOUT_MS` (по умолчанию ~3000)
+- `PTR_TTL_MS` (по умолчанию ~3600000)
+- `A_RECORD_TTL_MS` (по умолчанию ~600000)
+- `AGGREGATED_TTL_MS` (по умолчанию ~86400000)
+- `CONCURRENCY_DEFAULT` (по умолчанию ~10)
+- `CACHE_KEY_PREFIX` (по умолчанию `v1:`)
 
-All endpoints are exposed under `/api` when the app runs.
+## API endpoints
+
+Все эндпоинты доступны под `/api` при запуске приложения.
 
 `POST /api/check`
-- Body (JSON): `{ "domain": "string" }`
-- Returns scoring and analysis for the supplied domain.
+- Тело (JSON): `{ "domain": "string" }`
+- Возвращает оценку и анализ по домену.
 
-Example:
+Пример:
 
 ```bash
 curl -sS -X POST http://localhost:3000/api/check \
@@ -67,47 +76,52 @@ curl -sS -X POST http://localhost:3000/api/check \
 ```
 
 `POST /api/reverse`
-- Body (JSON): `{ "subdomain": "string" }`
-- Returns tokenized and reversed subdomain form.
+- Тело (JSON): `{ "text": "string", "maxIPs?: number" }`
+  - `text` — произвольный текст, содержащий IP-адреса (новые строки и произвольные команды допускаются).
+  - `maxIPs` — опционально: предел числа IP для обработки (по умолчанию ~100).
+- Возвращает: результаты обратного DNS (reverse DNS) для каждого обнаруженного IP в `text`.
 
-Example:
+Пример запроса:
 
 ```bash
 curl -sS -X POST http://localhost:3000/api/reverse \
   -H 'Content-Type: application/json' \
-  -d '{"subdomain":"a.b.c.example.com"}'
+  -d '{"text":"93.184.216.34\n8.8.8.8","maxIPs":10}'
 ```
 
-Example response:
+Пример ответа:
 
 ```json
-{
-  "original": "a.b.c.example.com",
-  "reversed": "com.example.c.b.a",
-  "tokens": ["a","b","c","example","com"]
-}
+[
+  {"ip":"93.184.216.34","hostnames":["www.example.com"],"error":null},
+  {"ip":"8.8.8.8","hostnames":["dns.google"],"error":null}
+]
 ```
 
-## Development notes
+## Заметки для разработчиков
 
-- Core logic lives in `lib/` — see `score.ts`, `subdomain.ts`, `reverse.ts`, and `aggregator.ts`.
-- Tests are in `__tests__/` and run with Jest (`npm test`).
-- The project includes an ESLint config; CI runs linting if a `lint` script exists.
+- Основная логика находится в `lib/` — смотрите `score.ts`, `subdomain.ts`, `reverse.ts`, `aggregator.ts`.
+- Тесты расположены в `__tests__/` и запускаются через Jest (`npm test`).
+- В проекте есть конфигурация ESLint; CI запускает линтер, если присутствует скрипт `lint`.
 
-## Contributing
+## Вклад в проект
 
-1. Fork the repository and create a topic branch.
-2. Add tests for your change and keep changes minimal.
-3. Open a pull request with a clear description and link to related issues.
+1. Форкните репозиторий и создайте ветку темы.
+2. Добавьте тесты для ваших изменений и держите изменения минимальными.
+3. Откройте pull request с понятным описанием и ссылкой на связанные issue.
 
-## License
+## Лицензия
 
-This project is released under the MIT License — see `LICENSE`.
+Проект распространяется под лицензией MIT — см. `LICENSE`.
 
-## Русский — кратко
+## Рекомендуемые теги GitHub
 
-Domain Checker — лёгкий сервис на Next.js для проверки доменов и обратного анализа поддоменов. Быстрая настройка: `npm ci`, `npm run dev`. Настройки: `REDIS_URL`, `REDIS_PASSWORD`, `LOG_LEVEL`.
+`domain-validation`, `nextjs`, `typescript`, `dns`, `redis`, `api`
 
-Suggested GitHub topics: `domain-validation`, `nextjs`, `typescript`, `dns`, `redis`, `api`
+## Краткое описание для `package.json`
 
-Short description for package.json: "Small Next.js service for domain validation and subdomain reverse lookups."
+"Небольшой сервис на Next.js для валидации доменов и обратного анализа поддоменов."
+
+## Техническая документация
+
+Подробная техническая документация для разработчиков доступна в файле: [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md)

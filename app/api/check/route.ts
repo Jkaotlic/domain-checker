@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as dns } from 'dns';
+import { createDefaultCache } from '../../../lib/cache';
+import { CONFIG } from '../../../lib/config';
+import runTasksWithRetry from '../../../lib/net/worker';
+import passiveSources from '../../../lib/passiveSources';
 
 interface SubdomainInfo {
   subdomain: string;
@@ -75,18 +79,13 @@ async function checkSubdomain(subdomain: string): Promise<SubdomainInfo | null> 
 
 async function getSubdomainsFromCrtSh(domain: string): Promise<SubdomainInfo[]> {
   try {
-    const response = await fetch(`https://crt.sh/?q=%.${domain}&output=json`, {
-      headers: { 'User-Agent': 'Domain-Checker/1.0' },
-      signal: AbortSignal.timeout(10000)
-    });
-    
-    if (!response.ok) return [];
-    
-    const data = await response.json();
+    const url = `https://crt.sh/?q=%25.${domain}&output=json`;
+    const res = await (await import('../../../lib/net/fetchWithRetry')).fetchWithRetry(url, undefined, { retries: 2, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
+    if (!res.ok) return [];
+    const data = await res.json();
     const subdomains = new Set<string>();
-    
     for (const cert of data) {
-      const names = cert.name_value.split('\n');
+      const names = (cert.name_value || '').split('\n');
       for (const name of names) {
         const cleanName = name.trim().toLowerCase();
         if (cleanName.endsWith(`.${domain}`) && !cleanName.includes('*')) {
@@ -94,27 +93,18 @@ async function getSubdomainsFromCrtSh(domain: string): Promise<SubdomainInfo[]> 
         }
       }
     }
-    
-    const results: SubdomainInfo[] = [];
-    for (const subdomain of Array.from(subdomains).slice(0, 100)) {
+    const list = Array.from(subdomains).slice(0, 100);
+    // Resolve IPs with controlled concurrency
+    const tasks = list.map((sub) => async () => {
       try {
-        const ips = await dns.resolve4(subdomain);
-        results.push({
-          subdomain,
-          ips,
-          source: 'certificate'
-        });
+        const ips = await dns.resolve4(sub);
+        return { subdomain: sub, ips, source: 'certificate' } as SubdomainInfo;
       } catch {
-        // Поддомен найден в сертификате, но не резолвится
-        results.push({
-          subdomain,
-          ips: [],
-          source: 'certificate (inactive)'
-        });
+        return { subdomain: sub, ips: [], source: 'certificate (inactive)' } as SubdomainInfo;
       }
-    }
-    
-    return results;
+    });
+    const resolved = await runTasksWithRetry(tasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 1 });
+    return resolved.filter(r => !(r instanceof Error)) as SubdomainInfo[];
   } catch (error) {
     console.error('crt.sh error:', error);
     return [];
@@ -299,12 +289,12 @@ export async function POST(request: NextRequest) {
     const commonResults = await Promise.all(commonChecks);
     allSubdomains.push(...commonResults.filter(r => r !== null) as SubdomainInfo[]);
 
-    // 3. Параллельный поиск через все источники
+    // 3. Параллельный поиск через все источники (используем адаптеры в lib/passiveSources)
     const [certSubdomains, hackerTargetSubdomains, urlScanSubdomains, alienVaultSubdomains] = await Promise.all([
       getSubdomainsFromCrtSh(cleanDomain),
-      getSubdomainsFromHackerTarget(cleanDomain),
-      getSubdomainsFromUrlScan(cleanDomain),
-      getSubdomainsFromAlienVault(cleanDomain)
+      (passiveSources as any).getFromHackertarget(cleanDomain).then((arr: string[]) => (arr || []).map((s: string) => ({ subdomain: s, ips: [], source: 'hackertarget' } as SubdomainInfo))),
+      (passiveSources as any).getFromURLScan(cleanDomain).then((arr: string[]) => (arr || []).map((s: string) => ({ subdomain: s, ips: [], source: 'urlscan.io' } as SubdomainInfo))),
+      (passiveSources as any).getFromAlienVault(cleanDomain).then((arr: string[]) => (arr || []).map((s: string) => ({ subdomain: s, ips: [], source: 'alienvault' } as SubdomainInfo)))
     ]);
     
     // Объединяем результаты, избегая дубликатов
@@ -332,6 +322,16 @@ export async function POST(request: NextRequest) {
       ),
       total: subdomainMap.size
     };
+
+    // Cache aggregated result
+    try {
+      const cache = createDefaultCache<DomainCheckResult>();
+      const key = `check:${cleanDomain}`;
+      await cache.set(key, result, CONFIG.TTL.AGGREGATED_MS);
+    } catch (e) {
+      // cache failures should not block response
+      console.warn('cache set failed', e);
+    }
 
     return NextResponse.json(result);
 

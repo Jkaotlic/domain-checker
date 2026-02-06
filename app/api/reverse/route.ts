@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as dns } from 'dns';
+import { createDefaultCache } from '../../../lib/cache';
+import runTasksWithRetry from '../../../lib/net/worker';
+import { CONFIG } from '../../../lib/config';
 
 interface ReverseDNSResult {
   ip: string;
@@ -110,25 +113,26 @@ export async function POST(request: NextRequest) {
     // Ограничиваем количество IP для обработки
     const ipsToProcess = ips.slice(0, maxIPs);
     
-    // Выполняем reverse DNS lookup для всех IP адресов
-    const results: ReverseDNSResult[] = [];
-    
-    // Обрабатываем IP параллельно, но с ограничением
-    const batchSize = 10;
-    for (let i = 0; i < ipsToProcess.length; i += batchSize) {
-      const batch = ipsToProcess.slice(i, i + batchSize);
-      const batchResults = await Promise.all(
-        batch.map(ip => reverseDNSLookup(ip))
-      );
-      results.push(...batchResults);
-    }
+    // Выполняем reverse DNS lookup для всех IP адресов с контролируемой параллельностью и кэшом
+    const cache = createDefaultCache<ReverseDNSResult>();
+    const tasks: Array<() => Promise<ReverseDNSResult>> = ipsToProcess.map((ip) => async () => {
+      const key = `reverse:${ip}`;
+      const cached = await cache.get(key);
+      if (cached) return cached;
+      const res = await reverseDNSLookup(ip);
+      await cache.set(key, res, CONFIG.TTL.PTR_MS);
+      return res;
+    });
+
+    const results = await runTasksWithRetry(tasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 2 });
+    const normalizedResults = results.map(r => r instanceof Error ? { ip: '0.0.0.0', hostnames: [], error: (r as Error).message } as ReverseDNSResult : r as ReverseDNSResult);
     
     // Фильтруем результаты - оставляем только те, где найдены имена
-    const successfulResults = results.filter(r => r.hostnames.length > 0);
+    const successfulResults = normalizedResults.filter(r => r.hostnames && r.hostnames.length > 0);
     
     const response: ReverseDNSResponse = {
-      results,
-      total: results.length,
+      results: normalizedResults,
+      total: normalizedResults.length,
       successful: successfulResults.length
     };
     
