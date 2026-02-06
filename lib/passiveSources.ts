@@ -15,7 +15,7 @@ export async function getFromAlienVault(domain: string) { return fetchAlienVault
 
 export async function getFromCommonCrawl(domain: string): Promise<string[]> {
   // Placeholder for CommonCrawl extraction; implement as needed.
-  const { default: l } = await import('./../logger');
+  const { default: l } = await import('./logger');
   l.debug({ domain }, 'getFromCommonCrawl: stub called');
   return [];
 }
