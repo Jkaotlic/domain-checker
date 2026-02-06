@@ -40,6 +40,26 @@ npm start
 npm test
 ```
 
+## Запуск в Docker (рекомендованный для локального тестирования)
+
+Добавлены `Dockerfile` и `docker-compose.yml` для быстрого поднятия сервиса локально вместе с Redis.
+
+Сборка образа и запуск контейнеров:
+
+```bash
+docker compose up --build
+```
+
+После запуска приложение будет доступно на `http://localhost:3000`. Redis автоматически поднимается в отдельном контейнере и доступен по URL `redis://redis:6379` внутри compose-сети; `REDIS_URL` уже выставлен в `docker-compose.yml`.
+
+Если хотите запустить только контейнер приложения без Redis, удалите или измените `REDIS_URL` в `docker-compose.yml` или используйте `docker build` и `docker run` напрямую:
+
+```bash
+docker build -t domain-checker:local .
+docker run -p 3000:3000 --env NODE_ENV=production domain-checker:local
+```
+
+
 ## Конфигурация (переменные окружения)
 
 - `REDIS_URL` — опционально. При заданной переменной приложение попытается подключиться к Redis (используется `ioredis`). При недоступности Redis выполняется fallback на встроенный LRU-кеш в памяти.

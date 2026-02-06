@@ -37,19 +37,14 @@ export async function fetchWithRetry(url: string, init?: RequestInit, opts?: Fet
 }
 
 async function execWithRetry(url: string, init: RequestInit | undefined, cfg: { retries: number; base: number; timeoutMs: number; }) {
+  const fetchFn = await resolveFetch();
   let attempt = 0;
   while (true) {
     attempt++;
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), cfg.timeoutMs);
-    try {
-      // Use runtime-provided global `fetch` when available (Node 18+ / Next.js).
-      // Avoid importing ESM-only `node-fetch` which causes Jest/transform issues.
-      const runtimeFetch = (globalThis as any).fetch;
-      if (typeof runtimeFetch !== 'function') {
-        throw new Error('fetch is not available in this runtime. Ensure Node 18+ or Next.js provides global fetch');
-      }
-      const res = await runtimeFetch(url, { ...(init || {}), signal: controller.signal });
+        try {
+      const res = await fetchFn(url, { ...(init || {}), signal: controller.signal } as any);
       clearTimeout(id);
       if (res.status === 429) {
         // rate limited - respect Retry-After if present
@@ -96,4 +91,16 @@ function parseRetryAfter(val: string): number {
   const t = Date.parse(val);
   if (!Number.isNaN(t)) return Math.max(0, t - Date.now());
   return 1000;
+}
+
+let _cachedFetch: any | null = null;
+async function resolveFetch() {
+  if (_cachedFetch) return _cachedFetch;
+  if ((globalThis as any).fetch) {
+    _cachedFetch = (globalThis as any).fetch.bind(globalThis);
+    return _cachedFetch;
+  }
+  // Prefer using the runtime-provided global `fetch` (Next.js / Node 18+).
+  // Avoid bundling `node-fetch` to keep Turbopack/Next.js resolution simple.
+  throw new Error('fetch is not available in this runtime. Ensure Node 18+ or Next.js provides global `fetch`.');
 }
