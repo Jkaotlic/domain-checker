@@ -1,4 +1,5 @@
 import LRU from "lru-cache";
+import RedisCacheAdapter from './cache/redisAdapter';
 
 export type CacheKey = string;
 
@@ -74,8 +75,15 @@ export class RedisAdapterStub<V = unknown> implements CacheAdapter {
 export function createDefaultCache<V = unknown>(): CacheAdapter<string, V> {
   const redisUrl = process.env.REDIS_URL;
   if (redisUrl) {
-    // Return stub for now; replace with real RedisAdapter when implemented.
-    return new RedisAdapterStub<V>(redisUrl);
+    // If REDIS_URL is configured, attempt to use the real RedisCacheAdapter.
+    try {
+      return new RedisCacheAdapter<V>();
+    } catch (err) {
+      // Fallback to stub if something goes wrong during instantiation.
+      // eslint-disable-next-line no-console
+      console.warn('Failed to initialize RedisCacheAdapter, falling back to in-memory cache', err);
+      return new RedisAdapterStub<V>(redisUrl);
+    }
   }
   return new InMemoryLRUAdapter<V>();
 }
