@@ -38,6 +38,8 @@ export default function Home() {
   const [reverseText, setReverseText] = useState('');
   const [reverseLoading, setReverseLoading] = useState(false);
   const [reverseResult, setReverseResult] = useState<ReverseDNSResponse | null>(null);
+  const [gateway, setGateway] = useState('');
+  const [showGatewayInput, setShowGatewayInput] = useState(false);
 
   const checkDomain = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,6 +133,50 @@ export default function Home() {
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
+  };
+
+  const exportKeeneticRoutes = () => {
+    if (!result || result.subdomains.length === 0 || !gateway.trim()) return;
+
+    const gw = gateway.trim();
+    const lines: string[] = [];
+    // Собираем IP → описание (поддомены)
+    const ipToSubs = new Map<string, Set<string>>();
+    result.subdomains.forEach(sub => {
+      sub.ips.forEach(ip => {
+        // Только IPv4
+        if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return;
+        if (!ipToSubs.has(ip)) ipToSubs.set(ip, new Set());
+        ipToSubs.get(ip)!.add(sub.subdomain);
+      });
+    });
+
+    const sortedIps = Array.from(ipToSubs.keys()).sort((a, b) => {
+      const pa = a.split('.').map(Number);
+      const pb = b.split('.').map(Number);
+      for (let i = 0; i < 4; i++) { if (pa[i] !== pb[i]) return pa[i] - pb[i]; }
+      return 0;
+    });
+
+    for (const ip of sortedIps) {
+      const desc = Array.from(ipToSubs.get(ip)!).join(', ');
+      lines.push(`rem ${desc}`);
+      lines.push(`route ADD ${ip} MASK 255.255.255.255 ${gw}`);
+    }
+
+    if (lines.length === 0) return;
+
+    const content = lines.join('\r\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${result.domain}_keenetic_routes.bat`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    setShowGatewayInput(false);
   };
 
   const exportReverseDNSToTxt = () => {
@@ -261,9 +307,45 @@ export default function Home() {
                         </svg>
                         IP адреса TXT
                       </button>
+                      <button
+                        onClick={() => setShowGatewayInput(!showGatewayInput)}
+                        className="px-6 py-3 bg-orange-600 text-white rounded-lg font-semibold hover:bg-orange-700 transition flex items-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        Keenetic Routes
+                      </button>
                     </div>
                   )}
                 </div>
+
+                {showGatewayInput && !result.error && result.subdomains.length > 0 && (
+                  <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Введите IP шлюза (gateway) для маршрутов Keenetic:
+                    </label>
+                    <div className="flex gap-3">
+                      <input
+                        type="text"
+                        value={gateway}
+                        onChange={(e) => setGateway(e.target.value)}
+                        placeholder="Например: 192.168.1.1"
+                        className="flex-1 px-4 py-2 rounded-lg border-2 border-gray-300 focus:border-orange-500 focus:outline-none font-mono"
+                      />
+                      <button
+                        onClick={exportKeeneticRoutes}
+                        disabled={!gateway.trim()}
+                        className="px-6 py-2 bg-orange-600 text-white rounded-lg font-semibold hover:bg-orange-700 disabled:bg-gray-400 transition"
+                      >
+                        Скачать .bat
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Формат: route ADD IP MASK 255.255.255.255 GATEWAY — с описанием ресурса в комментарии
+                    </p>
+                  </div>
+                )}
 
                 {result.error ? (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
