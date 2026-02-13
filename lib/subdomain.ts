@@ -19,7 +19,7 @@ export function normalizeDomain(input: string): string {
       s = "http://" + s;
     }
     const url = new URL(s);
-    let hostname = url.hostname;
+    const hostname = url.hostname;
 
     // Convert to ASCII (punycode) and lowercase
     const ascii = punycode.toASCII(hostname).toLowerCase();

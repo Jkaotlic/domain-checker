@@ -47,7 +47,6 @@ export async function getRedisClient(): Promise<Redis | null> {
     client = null;
     // Avoid noisy crashes — surface via warn.
     // Note: production code could add retries/backoff here.
-    // eslint-disable-next-line no-console
     console.warn('Redis not available, falling back to in-process fallback', err);
     return null;
   }
@@ -89,8 +88,9 @@ export async function redisGetJson<T = unknown>(key: string): Promise<T | null> 
   }
 }
 
-export default {
+const redisUtils = {
   getRedisClient,
   redisSetJson,
   redisGetJson,
 };
+export default redisUtils;

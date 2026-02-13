@@ -3,7 +3,8 @@ import { promises as dns } from 'dns';
 import { createDefaultCache } from '../../../lib/cache';
 import { CONFIG } from '../../../lib/config';
 import runTasksWithRetry from '../../../lib/net/worker';
-import passiveSources from '../../../lib/passiveSources';
+import { fetchWithRetry } from '../../../lib/net/fetchWithRetry';
+import { getFromHackertarget, getFromURLScan, getFromAlienVault } from '../../../lib/passiveSources';
 
 interface SubdomainInfo {
   subdomain: string;
@@ -20,46 +21,29 @@ interface DomainCheckResult {
 
 // Расширенный список популярных поддоменов
 const COMMON_SUBDOMAINS = [
-  // Основные
   'www', 'mail', 'ftp', 'smtp', 'pop', 'pop3', 'imap', 'webmail', 'email',
-  // DNS и инфраструктура
   'ns', 'ns1', 'ns2', 'ns3', 'ns4', 'dns', 'dns1', 'dns2',
-  // Административные
   'admin', 'administrator', 'root', 'cpanel', 'whm', 'panel', 'control',
-  // Веб-сервисы
   'api', 'api1', 'api2', 'rest', 'graphql', 'gateway', 'service', 'services',
-  // Мобильные и приложения
   'app', 'mobile', 'm', 'android', 'ios', 'apps', 'play',
-  // CDN и статика
   'cdn', 'cdn1', 'cdn2', 'cdn3', 'static', 'assets', 'media', 'images', 'img',
   'video', 'videos', 'photos', 'files', 'download', 'downloads', 'content',
   'css', 'js', 'fonts', 'uploads',
-  // E-commerce
   'shop', 'store', 'cart', 'checkout', 'payment', 'pay', 'orders', 'products',
-  // Сообщество и контент
   'blog', 'news', 'forum', 'community', 'wiki', 'kb', 'help', 'support',
   'docs', 'documentation', 'faq', 'learn', 'tutorial', 'guides',
-  // Разработка и тестирование
   'dev', 'development', 'staging', 'stage', 'test', 'testing', 'qa',
   'demo', 'sandbox', 'beta', 'alpha', 'preview', 'uat', 'preprod',
-  // Аналитика и мониторинг
   'analytics', 'stats', 'statistics', 'metrics', 'monitor', 'monitoring',
   'status', 'health', 'logs', 'log', 'grafana', 'kibana',
-  // Безопасность и VPN
   'vpn', 'remote', 'secure', 'ssl', 'auth', 'login', 'oauth', 'sso',
-  // Облачные сервисы
   'cloud', 'aws', 'azure', 'gcp', 's3', 'storage',
-  // Почтовые
   'autodiscover', 'autoconfig', 'mx', 'mx1', 'mx2', 'smtp1', 'smtp2',
-  // Социальные и коммуникация
-  'social', 'chat', 'meet', 'conference', 'video', 'call', 'webrtc',
-  // Маркетинг
+  'social', 'chat', 'meet', 'conference', 'call', 'webrtc',
   'marketing', 'promo', 'campaign', 'newsletter', 'subscribe',
-  // Дополнительные сервисы
   'dashboard', 'console', 'portal', 'account', 'my', 'user', 'profile',
   'search', 'www2', 'www3', 'old', 'new', 'v2', 'v3', 'web', 'site',
   'server', 'host', 'node', 'edge', 'origin', 'backup', 'mirror',
-  // Специфичные для больших платформ
   'ads', 'advertising', 'affiliates', 'partners', 'developer', 'developers',
   'careers', 'jobs', 'about', 'contact', 'legal', 'privacy', 'terms'
 ];
@@ -67,11 +51,7 @@ const COMMON_SUBDOMAINS = [
 async function checkSubdomain(subdomain: string): Promise<SubdomainInfo | null> {
   try {
     const ips = await dns.resolve4(subdomain);
-    return {
-      subdomain,
-      ips,
-      source: 'dns-check'
-    };
+    return { subdomain, ips, source: 'dns-check' };
   } catch {
     return null;
   }
@@ -79,10 +59,11 @@ async function checkSubdomain(subdomain: string): Promise<SubdomainInfo | null> 
 
 async function getSubdomainsFromCrtSh(domain: string): Promise<SubdomainInfo[]> {
   try {
-    const url = `https://crt.sh/?q=%25.${domain}&output=json`;
-    const res = await (await import('../../../lib/net/fetchWithRetry')).fetchWithRetry(url, undefined, { retries: 2, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
+    const url = `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`;
+    const res = await fetchWithRetry(url, undefined, { retries: 2, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
     if (!res.ok) return [];
     const data = await res.json();
+    if (!Array.isArray(data)) return [];
     const subdomains = new Set<string>();
     for (const cert of data) {
       const names = (cert.name_value || '').split('\n');
@@ -94,7 +75,6 @@ async function getSubdomainsFromCrtSh(domain: string): Promise<SubdomainInfo[]> 
       }
     }
     const list = Array.from(subdomains).slice(0, 100);
-    // Resolve IPs with controlled concurrency
     const tasks = list.map((sub) => async () => {
       try {
         const ips = await dns.resolve4(sub);
@@ -111,144 +91,6 @@ async function getSubdomainsFromCrtSh(domain: string): Promise<SubdomainInfo[]> 
   }
 }
 
-// Поиск через HackerTarget API
-async function getSubdomainsFromHackerTarget(domain: string): Promise<SubdomainInfo[]> {
-  try {
-    const response = await fetch(`https://api.hackertarget.com/hostsearch/?q=${domain}`, {
-      headers: { 'User-Agent': 'Domain-Checker/1.0' },
-      signal: AbortSignal.timeout(10000)
-    });
-    
-    if (!response.ok) return [];
-    
-    const text = await response.text();
-    if (text.includes('error') || text.includes('API count exceeded')) return [];
-    
-    const lines = text.split('\n').filter(line => line.trim());
-    const results: SubdomainInfo[] = [];
-    
-    for (const line of lines.slice(0, 50)) {
-      const [subdomain, ip] = line.split(',').map(s => s.trim());
-      if (subdomain && ip) {
-        results.push({
-          subdomain: subdomain.toLowerCase(),
-          ips: [ip],
-          source: 'hackertarget'
-        });
-      }
-    }
-    
-    return results;
-  } catch (error) {
-    console.error('HackerTarget error:', error);
-    return [];
-  }
-}
-
-// Поиск через URLScan.io
-async function getSubdomainsFromUrlScan(domain: string): Promise<SubdomainInfo[]> {
-  try {
-    const response = await fetch(`https://urlscan.io/api/v1/search/?q=domain:${domain}`, {
-      headers: { 'User-Agent': 'Domain-Checker/1.0' },
-      signal: AbortSignal.timeout(10000)
-    });
-    
-    if (!response.ok) return [];
-    
-    const data = await response.json();
-    const subdomains = new Set<string>();
-    
-    if (data.results) {
-      for (const result of data.results) {
-        if (result.page?.domain) {
-          const subdomain = result.page.domain.toLowerCase();
-          if (subdomain.endsWith(`.${domain}`) || subdomain === domain) {
-            subdomains.add(subdomain);
-          }
-        }
-        if (result.task?.domain) {
-          const subdomain = result.task.domain.toLowerCase();
-          if (subdomain.endsWith(`.${domain}`) || subdomain === domain) {
-            subdomains.add(subdomain);
-          }
-        }
-      }
-    }
-    
-    const results: SubdomainInfo[] = [];
-    for (const subdomain of Array.from(subdomains).slice(0, 50)) {
-      try {
-        const ips = await dns.resolve4(subdomain);
-        results.push({
-          subdomain,
-          ips,
-          source: 'urlscan.io'
-        });
-      } catch {
-        results.push({
-          subdomain,
-          ips: [],
-          source: 'urlscan.io (inactive)'
-        });
-      }
-    }
-    
-    return results;
-  } catch (error) {
-    console.error('URLScan error:', error);
-    return [];
-  }
-}
-
-// Поиск через AlienVault OTX
-async function getSubdomainsFromAlienVault(domain: string): Promise<SubdomainInfo[]> {
-  try {
-    const response = await fetch(`https://otx.alienvault.com/api/v1/indicators/domain/${domain}/passive_dns`, {
-      headers: { 'User-Agent': 'Domain-Checker/1.0' },
-      signal: AbortSignal.timeout(10000)
-    });
-    
-    if (!response.ok) return [];
-    
-    const data = await response.json();
-    const subdomains = new Set<string>();
-    
-    if (data.passive_dns) {
-      for (const record of data.passive_dns) {
-        if (record.hostname) {
-          const subdomain = record.hostname.toLowerCase();
-          if (subdomain.endsWith(`.${domain}`) || subdomain === domain) {
-            subdomains.add(subdomain);
-          }
-        }
-      }
-    }
-    
-    const results: SubdomainInfo[] = [];
-    for (const subdomain of Array.from(subdomains).slice(0, 50)) {
-      try {
-        const ips = await dns.resolve4(subdomain);
-        results.push({
-          subdomain,
-          ips,
-          source: 'alienvault'
-        });
-      } catch {
-        results.push({
-          subdomain,
-          ips: [],
-          source: 'alienvault (inactive)'
-        });
-      }
-    }
-    
-    return results;
-  } catch (error) {
-    console.error('AlienVault error:', error);
-    return [];
-  }
-}
-
 export async function POST(request: NextRequest) {
   try {
     const { domain } = await request.json();
@@ -260,14 +102,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Очистка домена от протоколов и слешей
     const cleanDomain = domain
       .replace(/^https?:\/\//, '')
       .replace(/^www\./, '')
       .replace(/\/.*$/, '')
-      .trim();
+      .trim()
+      .toLowerCase();
 
-    if (!cleanDomain) {
+    if (!cleanDomain || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(cleanDomain)) {
       return NextResponse.json(
         { error: 'Неверный формат домена' },
         { status: 400 }
@@ -282,36 +124,41 @@ export async function POST(request: NextRequest) {
       allSubdomains.push(mainDomain);
     }
 
-    // 2. Проверка популярных поддоменов (параллельно)
-    const commonChecks = COMMON_SUBDOMAINS.map(sub => 
-      checkSubdomain(`${sub}.${cleanDomain}`)
-    );
-    const commonResults = await Promise.all(commonChecks);
-    allSubdomains.push(...commonResults.filter(r => r !== null) as SubdomainInfo[]);
+    // 2. Проверка популярных поддоменов (через worker с concurrency)
+    const commonTasks = COMMON_SUBDOMAINS.map(sub => () => checkSubdomain(`${sub}.${cleanDomain}`));
+    const commonResults = await runTasksWithRetry(commonTasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 1 });
+    for (const r of commonResults) {
+      if (r && !(r instanceof Error)) allSubdomains.push(r);
+    }
 
-    // 3. Параллельный поиск через все источники (используем адаптеры в lib/passiveSources)
-    const [certSubdomains, hackerTargetSubdomains, urlScanSubdomains, alienVaultSubdomains] = await Promise.all([
+    // 3. Параллельный поиск через бесплатные источники
+    const [certSubdomains, hackerTargetNames, urlScanNames, alienVaultNames] = await Promise.all([
       getSubdomainsFromCrtSh(cleanDomain),
-      (passiveSources as any).getFromHackertarget(cleanDomain).then((arr: string[]) => (arr || []).map((s: string) => ({ subdomain: s, ips: [], source: 'hackertarget' } as SubdomainInfo))),
-      (passiveSources as any).getFromURLScan(cleanDomain).then((arr: string[]) => (arr || []).map((s: string) => ({ subdomain: s, ips: [], source: 'urlscan.io' } as SubdomainInfo))),
-      (passiveSources as any).getFromAlienVault(cleanDomain).then((arr: string[]) => (arr || []).map((s: string) => ({ subdomain: s, ips: [], source: 'alienvault' } as SubdomainInfo)))
+      getFromHackertarget(cleanDomain).catch(() => [] as string[]),
+      getFromURLScan(cleanDomain).catch(() => [] as string[]),
+      getFromAlienVault(cleanDomain).catch(() => [] as string[]),
     ]);
-    
+
+    // Преобразуем строки из passive sources в SubdomainInfo
+    const passiveResults: SubdomainInfo[] = [
+      ...hackerTargetNames.map(s => ({ subdomain: s, ips: [], source: 'hackertarget' })),
+      ...urlScanNames.map(s => ({ subdomain: s, ips: [], source: 'urlscan.io' })),
+      ...alienVaultNames.map(s => ({ subdomain: s, ips: [], source: 'alienvault' })),
+    ];
+
     // Объединяем результаты, избегая дубликатов
     const subdomainMap = new Map<string, SubdomainInfo>();
-    
-    // Приоритет: активные домены с IP адресами важнее
-    for (const sub of [
-      ...allSubdomains, 
-      ...certSubdomains, 
-      ...hackerTargetSubdomains,
-      ...urlScanSubdomains,
-      ...alienVaultSubdomains
-    ]) {
-      const existing = subdomainMap.get(sub.subdomain);
-      // Если домен уже есть, обновляем только если новый имеет IP, а старый нет
-      if (!existing || (sub.ips.length > 0 && existing.ips.length === 0)) {
-        subdomainMap.set(sub.subdomain, sub);
+    for (const sub of [...allSubdomains, ...certSubdomains, ...passiveResults]) {
+      const key = sub.subdomain.toLowerCase();
+      const existing = subdomainMap.get(key);
+      if (!existing) {
+        subdomainMap.set(key, { ...sub, subdomain: key });
+      } else if (sub.ips.length > 0 && existing.ips.length === 0) {
+        subdomainMap.set(key, { ...sub, subdomain: key });
+      } else if (sub.ips.length > 0) {
+        // Мержим IP адреса из разных источников
+        const mergedIps = Array.from(new Set([...existing.ips, ...sub.ips]));
+        subdomainMap.set(key, { ...existing, ips: mergedIps });
       }
     }
 
@@ -329,7 +176,6 @@ export async function POST(request: NextRequest) {
       const key = `check:${cleanDomain}`;
       await cache.set(key, result, CONFIG.TTL.AGGREGATED_MS);
     } catch (e) {
-      // cache failures should not block response
       console.warn('cache set failed', e);
     }
 

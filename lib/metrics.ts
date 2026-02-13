@@ -76,4 +76,5 @@ export function observeReverseLatency(seconds: number): void {
 }
 
 export { register };
-export default { register, incRequests, incRateLimited, setCacheHitRatio, observeReverseLatency };
+const metrics = { register, incRequests, incRateLimited, setCacheHitRatio, observeReverseLatency };
+export default metrics;

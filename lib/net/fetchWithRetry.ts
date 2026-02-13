@@ -1,4 +1,4 @@
-import pLimit from 'p-limit';
+import pLimit from './pLimit';
 import { CONFIG } from '../config';
 import logger from '../logger';
 

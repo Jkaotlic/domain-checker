@@ -1,16 +1,23 @@
-FROM node:18-alpine
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install deps
 COPY package.json package-lock.json* ./
-RUN npm install --no-audit --no-fund --production || npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
-# Copy source and build
 COPY . .
-RUN npm run build || true
+RUN npm run build
+
+# --- production image ---
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 
 EXPOSE 3000
 
-ENV NODE_ENV=production
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

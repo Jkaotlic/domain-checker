@@ -1,4 +1,4 @@
-import pLimit from 'p-limit';
+import pLimit from './pLimit';
 import logger from '../logger';
 
 export async function runTasksWithRetry<T>(

@@ -64,7 +64,6 @@ docker run -p 3000:3000 --env NODE_ENV=production domain-checker:local
 
 - `REDIS_URL` — опционально. При заданной переменной приложение попытается подключиться к Redis (используется `ioredis`). При недоступности Redis выполняется fallback на встроенный LRU-кеш в памяти.
 - `REDIS_PASSWORD` — пароль Redis (опционально).
-- `SECURITYTRAILS_APIKEY` — API-ключ для SecurityTrails (используется в `lib/sources/securitytrails.ts`).
 - `LOG_LEVEL` — уровень логирования (по умолчанию `info`).
 - `NODE_ENV` — `development` или `production`.
 - `PORT` — порт для сервера в продакшн.

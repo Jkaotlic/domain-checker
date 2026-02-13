@@ -58,18 +58,6 @@ function isValidIP(ip: string): boolean {
   return true;
 }
 
-// Получение всех IP адресов из CIDR блока
-function expandCIDR(cidr: string): string[] {
-  // Упрощенная версия - возвращаем только первый IP из блока
-  // Для полной реализации нужна более сложная логика
-  const [baseIP, maskBits] = cidr.split('/');
-  if (maskBits && parseInt(maskBits) < 32) {
-    // Для больших блоков возвращаем только базовый IP
-    return [baseIP];
-  }
-  return [baseIP];
-}
-
 // Reverse DNS lookup для одного IP
 async function reverseDNSLookup(ip: string): Promise<ReverseDNSResult> {
   try {

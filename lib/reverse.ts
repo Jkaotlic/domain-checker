@@ -1,5 +1,5 @@
 import dns from "dns/promises";
-import pLimit from "p-limit";
+import pLimit from "./net/pLimit";
 // lightweight timeout helper (avoids ESM-only dependency)
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -204,8 +204,9 @@ export async function mapIPsToDomains(
   return map;
 }
 
-export default {
+const reverseUtils = {
   reverseLookup,
   extractDomainsFromText,
   mapIPsToDomains,
 };
+export default reverseUtils;

@@ -9,10 +9,10 @@ export async function fetchAlienVault(domain: string): Promise<string[]> {
     if (!res.ok) return [];
     const json = await res.json();
     const subs = new Set<string>();
-    const rows = json || [];
+    const rows = json?.passive_dns || json?.data || [];
     for (const r of rows) {
-      if (r.hostname) subs.add(r.hostname);
-      if (r.record && r.record.hostname) subs.add(r.record.hostname);
+      if (r.hostname) subs.add(r.hostname.toLowerCase());
+      if (r.address) subs.add(r.address); // sometimes subdomain is in address
     }
     return Array.from(subs);
   } catch (err) {

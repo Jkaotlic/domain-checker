@@ -111,6 +111,28 @@ export default function Home() {
     window.URL.revokeObjectURL(url);
   };
 
+  const exportIPsToTxt = () => {
+    if (!result || result.subdomains.length === 0) return;
+    
+    const allIps = new Set<string>();
+    result.subdomains.forEach(sub => {
+      sub.ips.forEach(ip => allIps.add(ip));
+    });
+    
+    if (allIps.size === 0) return;
+    
+    const content = Array.from(allIps).sort().join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${result.domain}_ips.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
+
   const exportReverseDNSToTxt = () => {
     if (!reverseResult || reverseResult.results.length === 0) return;
     
@@ -128,6 +150,28 @@ export default function Home() {
     const link = document.createElement('a');
     link.href = url;
     link.download = `reverse_dns_results.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
+
+  const exportReverseIPsToTxt = () => {
+    if (!reverseResult || reverseResult.results.length === 0) return;
+    
+    const ips = reverseResult.results
+      .filter(r => r.hostnames.length > 0)
+      .map(r => r.ip)
+      .sort();
+    
+    if (ips.length === 0) return;
+    
+    const content = ips.join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `reverse_dns_ips.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -198,15 +242,26 @@ export default function Home() {
                     </p>
                   </div>
                   {!result.error && result.subdomains.length > 0 && (
-                    <button
-                      onClick={exportToTxt}
-                      className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition flex items-center gap-2"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Экспорт в TXT
-                    </button>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={exportToTxt}
+                        className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition flex items-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Домены TXT
+                      </button>
+                      <button
+                        onClick={exportIPsToTxt}
+                        className="px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition flex items-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        IP адреса TXT
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -314,15 +369,26 @@ export default function Home() {
                     </p>
                   </div>
                   {reverseResult.successful > 0 && (
-                    <button
-                      onClick={exportReverseDNSToTxt}
-                      className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition flex items-center gap-2"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Экспорт доменов в TXT
-                    </button>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={exportReverseDNSToTxt}
+                        className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition flex items-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Домены TXT
+                      </button>
+                      <button
+                        onClick={exportReverseIPsToTxt}
+                        className="px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition flex items-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        IP адреса TXT
+                      </button>
+                    </div>
                   )}
                 </div>
 

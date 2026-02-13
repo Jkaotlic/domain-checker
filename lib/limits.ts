@@ -116,7 +116,6 @@ export async function rateLimit(
       return allowed;
     } catch (err) {
       // If Redis fails mid-flight, fall through to in-process fallback.
-      // eslint-disable-next-line no-console
       console.warn('Redis rate limit check failed, falling back to local limiter', err);
     }
   }
@@ -134,4 +133,5 @@ export async function rateLimit(
   return allowed;
 }
 
-export default { rateLimit };
+const limits = { rateLimit };
+export default limits;
