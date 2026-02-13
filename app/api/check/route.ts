@@ -156,9 +156,36 @@ export async function POST(request: NextRequest) {
       } else if (sub.ips.length > 0 && existing.ips.length === 0) {
         subdomainMap.set(key, { ...sub, subdomain: key });
       } else if (sub.ips.length > 0) {
-        // Мержим IP адреса из разных источников
         const mergedIps = Array.from(new Set([...existing.ips, ...sub.ips]));
         subdomainMap.set(key, { ...existing, ips: mergedIps });
+      }
+    }
+
+    // 4. Резолвим IP для всех поддоменов, у которых ips пустой
+    const unresolvedEntries = Array.from(subdomainMap.entries()).filter(([, v]) => v.ips.length === 0);
+    if (unresolvedEntries.length > 0) {
+      const resolveTasks = unresolvedEntries.map(([key, info]) => async () => {
+        try {
+          const ips = await dns.resolve4(info.subdomain);
+          return { key, ips };
+        } catch {
+          // Пробуем AAAA (IPv6) если A-запись не нашлась
+          try {
+            const ips6 = await dns.resolve6(info.subdomain);
+            return { key, ips: ips6 };
+          } catch {
+            return { key, ips: [] as string[] };
+          }
+        }
+      });
+      const resolved = await runTasksWithRetry(resolveTasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 1 });
+      for (const r of resolved) {
+        if (r && !(r instanceof Error) && r.ips.length > 0) {
+          const entry = subdomainMap.get(r.key);
+          if (entry) {
+            subdomainMap.set(r.key, { ...entry, ips: r.ips });
+          }
+        }
       }
     }
 
