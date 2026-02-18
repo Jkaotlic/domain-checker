@@ -119,21 +119,34 @@ export async function resolveHostDetails(
 }
 
 /**
- * Detect whether a domain uses wildcard DNS by resolving a random label and comparing IPs.
+ * Detect whether a domain uses wildcard DNS by resolving multiple random labels.
+ * Tests 3 random subdomains to reduce false positives.
+ * Returns the set of wildcard IPs if detected, empty set otherwise.
  */
 export async function detectWildcard(domain: string): Promise<boolean> {
   try {
-    const rnd = `x-${Math.random().toString(36).slice(2, 8)}`;
-    const testHost = `${rnd}.${domain}`;
-    const [base, test] = await Promise.all([resolveHostDetails(domain), resolveHostDetails(testHost)]);
-    const baseIps = new Set([...base.a, ...base.aaaa]);
-    const testIps = new Set([...test.a, ...test.aaaa]);
-    if (testIps.size === 0) return false;
-    // if every test IP is present in base IPs, it's likely wildcard (or authoritative mapping)
-    for (const ip of testIps) {
-      if (!baseIps.has(ip)) return false;
+    // Generate 3 random subdomains that shouldn't exist
+    const randoms = Array.from({ length: 3 }, () =>
+      `xzq-${Math.random().toString(36).slice(2, 10)}`
+    );
+    const testHosts = randoms.map(r => `${r}.${domain}`);
+    const results = await Promise.all(testHosts.map(h => resolveHostDetails(h)));
+
+    // Collect all IPs from random subdomains
+    const allTestIps: string[][] = results.map(r => [...r.a, ...r.aaaa]);
+
+    // If none of the random subdomains resolve, no wildcard
+    if (allTestIps.every(ips => ips.length === 0)) return false;
+
+    // If at least 2 out of 3 random subdomains resolve to the same IPs, it's wildcard
+    let matchCount = 0;
+    const firstSet = new Set(allTestIps[0]);
+    for (let i = 1; i < allTestIps.length; i++) {
+      if (allTestIps[i].length > 0 && allTestIps[i].every(ip => firstSet.has(ip))) {
+        matchCount++;
+      }
     }
-    return true;
+    return matchCount >= 1 && allTestIps[0].length > 0;
   } catch (err) {
     return false;
   }

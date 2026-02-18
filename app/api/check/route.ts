@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promises as dns } from 'dns';
 import { createDefaultCache } from '../../../lib/cache';
 import { CONFIG } from '../../../lib/config';
 import runTasksWithRetry from '../../../lib/net/worker';
-import { fetchWithRetry } from '../../../lib/net/fetchWithRetry';
-import { getFromHackertarget, getFromURLScan, getFromAlienVault } from '../../../lib/passiveSources';
+import {
+  getFromHackertarget, getFromURLScan, getFromAlienVault,
+  getFromCrtSh, getFromWebArchive, getFromCertSpotter,
+  getFromThreatMiner, getFromAnubis, getFromRapidDNS, getFromBufferOver,
+} from '../../../lib/passiveSources';
+import { resolve4WithFallback, resolve6WithFallback, attemptZoneTransfer } from '../../../lib/dns';
+import { detectWildcard } from '../../../lib/reverse';
 
 interface SubdomainInfo {
   subdomain: string;
@@ -16,79 +20,170 @@ interface DomainCheckResult {
   domain: string;
   subdomains: SubdomainInfo[];
   total: number;
+  wildcardDetected?: boolean;
+  sources: string[];
   error?: string;
 }
 
-// Расширенный список популярных поддоменов
+// Максимально расширенный список популярных поддоменов (~500)
 const COMMON_SUBDOMAINS = [
-  'www', 'mail', 'ftp', 'smtp', 'pop', 'pop3', 'imap', 'webmail', 'email',
-  'ns', 'ns1', 'ns2', 'ns3', 'ns4', 'dns', 'dns1', 'dns2',
-  'admin', 'administrator', 'root', 'cpanel', 'whm', 'panel', 'control',
-  'api', 'api1', 'api2', 'rest', 'graphql', 'gateway', 'service', 'services',
-  'app', 'mobile', 'm', 'android', 'ios', 'apps', 'play',
-  'cdn', 'cdn1', 'cdn2', 'cdn3', 'static', 'assets', 'media', 'images', 'img',
-  'video', 'videos', 'photos', 'files', 'download', 'downloads', 'content',
-  'css', 'js', 'fonts', 'uploads',
-  'shop', 'store', 'cart', 'checkout', 'payment', 'pay', 'orders', 'products',
-  'blog', 'news', 'forum', 'community', 'wiki', 'kb', 'help', 'support',
-  'docs', 'documentation', 'faq', 'learn', 'tutorial', 'guides',
-  'dev', 'development', 'staging', 'stage', 'test', 'testing', 'qa',
-  'demo', 'sandbox', 'beta', 'alpha', 'preview', 'uat', 'preprod',
+  // Web
+  'www', 'www1', 'www2', 'www3', 'www4', 'web', 'web1', 'web2', 'site', 'home',
+  // Mail
+  'mail', 'mail1', 'mail2', 'mail3', 'webmail', 'webmail2', 'email', 'e', 'smtp',
+  'smtp1', 'smtp2', 'smtp3', 'pop', 'pop3', 'imap', 'imap2', 'exchange', 'owa',
+  'mx', 'mx1', 'mx2', 'mx3', 'mailer', 'postfix', 'mailgw', 'mailgateway',
+  'autodiscover', 'autoconfig', 'mta', 'relay', 'relay1', 'relay2',
+  // DNS & NS
+  'ns', 'ns1', 'ns2', 'ns3', 'ns4', 'ns5', 'dns', 'dns1', 'dns2', 'dns3',
+  // FTP & Files
+  'ftp', 'ftp1', 'ftp2', 'sftp', 'files', 'file', 'download', 'downloads',
+  'upload', 'uploads', 'share', 'shared', 'nas', 'nfs',
+  // Admin & Control
+  'admin', 'admin1', 'admin2', 'administrator', 'root', 'cpanel', 'whm',
+  'panel', 'control', 'manager', 'manage', 'management', 'webadmin', 'sysadmin',
+  'backend', 'backoffice', 'cms',
+  // API & Services
+  'api', 'api1', 'api2', 'api3', 'api-v2', 'api-v3', 'rest', 'graphql', 'grpc',
+  'gateway', 'gw', 'service', 'services', 'svc', 'microservice', 'rpc',
+  'ws', 'websocket', 'wss', 'socket', 'webhook', 'webhooks', 'callback',
+  // Mobile & Apps
+  'app', 'app1', 'app2', 'mobile', 'm', 'android', 'ios', 'apps', 'play',
+  'pwa', 'hybrid',
+  // CDN & Static
+  'cdn', 'cdn1', 'cdn2', 'cdn3', 'cdn4', 'static', 'static1', 'static2',
+  'assets', 'asset', 'media', 'media1', 'media2', 'images', 'image', 'img',
+  'img1', 'img2', 'img3', 'photos', 'photo', 'pic', 'pics', 'thumb', 'thumbs',
+  'video', 'videos', 'stream', 'streaming', 'live', 'vod',
+  'css', 'js', 'fonts', 'font', 'res', 'resources', 'content',
+  // E-commerce
+  'shop', 'store', 'cart', 'checkout', 'payment', 'pay', 'payments',
+  'orders', 'order', 'products', 'catalog', 'market', 'marketplace', 'billing',
+  'invoice', 'invoices', 'subscriptions',
+  // Content & Community
+  'blog', 'blogs', 'news', 'press', 'forum', 'forums', 'community',
+  'wiki', 'kb', 'knowledgebase', 'help', 'support', 'helpdesk', 'ticket',
+  'tickets', 'feedback', 'ideas', 'suggest',
+  'docs', 'doc', 'documentation', 'faq', 'learn', 'tutorial', 'tutorials',
+  'guides', 'guide', 'handbook', 'manual', 'reference',
+  // Dev & Staging
+  'dev', 'dev1', 'dev2', 'dev3', 'development', 'develop',
+  'staging', 'stage', 'stg', 'test', 'test1', 'test2', 'test3', 'testing',
+  'qa', 'qa1', 'qa2', 'demo', 'demo1', 'demo2', 'sandbox',
+  'beta', 'alpha', 'preview', 'uat', 'preprod', 'pre', 'canary',
+  'nightly', 'rc', 'release', 'hotfix', 'feature',
+  // CI/CD & DevOps
+  'ci', 'cd', 'jenkins', 'gitlab', 'github', 'bitbucket',
+  'sonar', 'sonarqube', 'nexus', 'artifactory', 'registry', 'repo',
+  'docker', 'k8s', 'kubernetes', 'rancher', 'portainer', 'harbor',
+  'terraform', 'ansible', 'puppet', 'chef', 'salt',
+  'argo', 'argocd', 'drone', 'tekton', 'buildkite', 'circleci', 'travis',
+  // Monitoring & Analytics
   'analytics', 'stats', 'statistics', 'metrics', 'monitor', 'monitoring',
-  'status', 'health', 'logs', 'log', 'grafana', 'kibana',
-  'vpn', 'remote', 'secure', 'ssl', 'auth', 'login', 'oauth', 'sso',
-  'cloud', 'aws', 'azure', 'gcp', 's3', 'storage',
-  'autodiscover', 'autoconfig', 'mx', 'mx1', 'mx2', 'smtp1', 'smtp2',
-  'social', 'chat', 'meet', 'conference', 'call', 'webrtc',
-  'marketing', 'promo', 'campaign', 'newsletter', 'subscribe',
-  'dashboard', 'console', 'portal', 'account', 'my', 'user', 'profile',
-  'search', 'www2', 'www3', 'old', 'new', 'v2', 'v3', 'web', 'site',
-  'server', 'host', 'node', 'edge', 'origin', 'backup', 'mirror',
-  'ads', 'advertising', 'affiliates', 'partners', 'developer', 'developers',
-  'careers', 'jobs', 'about', 'contact', 'legal', 'privacy', 'terms'
+  'status', 'health', 'healthcheck', 'uptime',
+  'logs', 'log', 'logging', 'grafana', 'kibana', 'prometheus', 'zabbix',
+  'nagios', 'datadog', 'newrelic', 'sentry', 'apm', 'elk', 'splunk',
+  'jaeger', 'zipkin', 'trace', 'tracing',
+  // Security & Auth
+  'vpn', 'vpn1', 'vpn2', 'remote', 'secure', 'ssl', 'tls',
+  'auth', 'auth2', 'login', 'signin', 'signon', 'oauth', 'oauth2', 'sso',
+  'cas', 'ldap', 'ad', 'identity', 'id', 'iam', 'keycloak', 'okta',
+  'mfa', '2fa', 'otp', 'token', 'tokens', 'cert', 'certs', 'pki',
+  'waf', 'firewall', 'ids', 'ips', 'siem',
+  // Cloud & Infrastructure
+  'cloud', 'aws', 'azure', 'gcp', 'gce', 's3', 'storage', 'blob',
+  'compute', 'lambda', 'function', 'functions', 'serverless',
+  'edge', 'origin', 'proxy', 'proxy1', 'proxy2', 'reverse', 'lb', 'load',
+  'balancer', 'haproxy', 'nginx', 'apache', 'traefik', 'envoy', 'ingress',
+  'cache', 'cache1', 'cache2', 'varnish', 'memcached',
+  // Databases
+  'db', 'db1', 'db2', 'db3', 'database', 'mysql', 'mysql1',
+  'postgres', 'postgresql', 'pg', 'pgsql', 'mongo', 'mongodb',
+  'redis', 'redis1', 'elastic', 'elasticsearch', 'es', 'solr',
+  'kafka', 'rabbitmq', 'rabbit', 'mq', 'amqp', 'nats', 'activemq',
+  'cassandra', 'couchdb', 'influx', 'influxdb', 'clickhouse', 'mariadb',
+  // Servers
+  'server', 'server1', 'server2', 'server3', 'server4', 'server5',
+  'srv', 'srv1', 'srv2', 'srv3', 'host', 'host1', 'host2',
+  'node', 'node1', 'node2', 'node3', 'node4', 'node5',
+  'vps', 'vps1', 'vps2', 'vm', 'vm1', 'vm2',
+  'backup', 'backup1', 'backup2', 'bak', 'bk', 'mirror', 'replica',
+  // Communication
+  'social', 'chat', 'im', 'msg', 'message', 'messages', 'messaging',
+  'meet', 'meeting', 'conference', 'conf', 'call', 'calls', 'webrtc',
+  'slack', 'teams', 'zoom', 'matrix', 'xmpp', 'irc',
+  'voip', 'sip', 'pbx', 'asterisk', 'phone', 'tel', 'fax',
+  // Marketing
+  'marketing', 'promo', 'campaign', 'campaigns', 'newsletter', 'subscribe',
+  'landing', 'lp', 'click', 'track', 'tracking', 'pixel',
+  'go', 'link', 'links', 'redirect', 'short', 'url', 'r',
+  'affiliate', 'affiliates', 'partner', 'partners', 'referral',
+  // User-facing
+  'dashboard', 'dash', 'console', 'portal', 'account', 'accounts',
+  'my', 'user', 'users', 'profile', 'member', 'members',
+  'client', 'clients', 'customer', 'customers', 'crm',
+  'search', 'find', 'explore', 'discover',
+  // Legacy & Versions
+  'old', 'new', 'legacy', 'archive', 'archives', 'v1', 'v2', 'v3', 'v4',
+  'classic', 'modern', 'next', 'current',
+  // Corporate
+  'ads', 'ad', 'advertising', 'adserver',
+  'careers', 'career', 'jobs', 'hr', 'recruit', 'recruiting',
+  'about', 'info', 'information', 'contact', 'contacts',
+  'legal', 'privacy', 'terms', 'tos', 'policy', 'compliance',
+  'investor', 'investors', 'ir',
+  // Regional / i18n
+  'en', 'ru', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'ja', 'ko', 'zh', 'ar',
+  'eu', 'us', 'uk', 'au', 'ca', 'in', 'br', 'cn', 'jp', 'asia', 'global',
+  // Internal/Corporate tools
+  'intranet', 'internal', 'corp', 'corporate', 'office',
+  'erp', 'sap', 'oracle', 'salesforce', 'sf',
+  'jira', 'confluence', 'bamboo', 'crowd', 'fisheye',
+  'redmine', 'trac', 'bugzilla', 'mantis',
+  'sharepoint', 'onedrive', 'outlook', 'o365',
+  'vpn-gw', 'radius', 'tacacs', 'ntp', 'ntp1', 'ntp2', 'time',
+  'snmp', 'netflow', 'syslog',
+  // Misc
+  'data', 'data1', 'data2', 'feed', 'feeds', 'rss', 'atom',
+  'xml', 'json', 'soap', 'wsdl', 'graphql',
+  'print', 'printer', 'scan', 'scanner',
+  'git', 'svn', 'hg', 'cvs', 'code', 'source',
+  'wiki2', 'extranet', 'guest', 'temp', 'tmp', 'scratch',
+  'lab', 'labs', 'research', 'r-d', 'poc',
+  'map', 'maps', 'geo', 'gis', 'location', 'locations',
+  'event', 'events', 'calendar', 'cal', 'booking', 'reservation',
+  'survey', 'surveys', 'poll', 'polls', 'quiz', 'form', 'forms',
+  'report', 'reports', 'bi', 'tableau', 'powerbi', 'looker',
+  'notification', 'notifications', 'push', 'alert', 'alerts',
+  'smtp-out', 'smtp-in', 'mail-gw', 'mailrelay',
+  'img-cdn', 'video-cdn', 'edge1', 'edge2', 'pop1', 'pop2',
 ];
 
 async function checkSubdomain(subdomain: string): Promise<SubdomainInfo | null> {
   try {
-    const ips = await dns.resolve4(subdomain);
-    return { subdomain, ips, source: 'dns-check' };
+    const ips = await resolve4WithFallback(subdomain);
+    if (ips.length > 0) {
+      return { subdomain, ips, source: 'dns-bruteforce' };
+    }
+    // Try IPv6
+    const ips6 = await resolve6WithFallback(subdomain);
+    if (ips6.length > 0) {
+      return { subdomain, ips: ips6, source: 'dns-bruteforce' };
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-async function getSubdomainsFromCrtSh(domain: string): Promise<SubdomainInfo[]> {
-  try {
-    const url = `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`;
-    const res = await fetchWithRetry(url, undefined, { retries: 2, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (!Array.isArray(data)) return [];
-    const subdomains = new Set<string>();
-    for (const cert of data) {
-      const names = (cert.name_value || '').split('\n');
-      for (const name of names) {
-        const cleanName = name.trim().toLowerCase();
-        if (cleanName.endsWith(`.${domain}`) && !cleanName.includes('*')) {
-          subdomains.add(cleanName);
-        }
-      }
-    }
-    const list = Array.from(subdomains).slice(0, 100);
-    const tasks = list.map((sub) => async () => {
-      try {
-        const ips = await dns.resolve4(sub);
-        return { subdomain: sub, ips, source: 'certificate' } as SubdomainInfo;
-      } catch {
-        return { subdomain: sub, ips: [], source: 'certificate (inactive)' } as SubdomainInfo;
-      }
-    });
-    const resolved = await runTasksWithRetry(tasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 1 });
-    return resolved.filter(r => !(r instanceof Error)) as SubdomainInfo[];
-  } catch (error) {
-    console.error('crt.sh error:', error);
-    return [];
-  }
+/**
+ * Filter subdomains to ensure they belong to the target domain.
+ */
+function filterForDomain(names: string[], domain: string): string[] {
+  return names.filter(name => {
+    const clean = name.toLowerCase().trim();
+    return clean === domain || clean.endsWith(`.${domain}`);
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -117,38 +212,75 @@ export async function POST(request: NextRequest) {
     }
 
     const allSubdomains: SubdomainInfo[] = [];
+    const usedSources: Set<string> = new Set();
 
-    // 1. Проверка основного домена
-    const mainDomain = await checkSubdomain(cleanDomain);
+    // 1. Проверка основного домена + обнаружение wildcard (параллельно)
+    const [mainDomain, isWildcard, zoneTransferResults] = await Promise.all([
+      checkSubdomain(cleanDomain),
+      detectWildcard(cleanDomain),
+      attemptZoneTransfer(cleanDomain).catch(() => [] as string[]),
+    ]);
+
     if (mainDomain) {
       allSubdomains.push(mainDomain);
     }
 
+    // Zone transfer results
+    if (zoneTransferResults.length > 0) {
+      usedSources.add('zone-transfer');
+      for (const sub of filterForDomain(zoneTransferResults, cleanDomain)) {
+        allSubdomains.push({ subdomain: sub, ips: [], source: 'zone-transfer' });
+      }
+    }
+
     // 2. Проверка популярных поддоменов (через worker с concurrency)
+    usedSources.add('dns-bruteforce');
     const commonTasks = COMMON_SUBDOMAINS.map(sub => () => checkSubdomain(`${sub}.${cleanDomain}`));
-    const commonResults = await runTasksWithRetry(commonTasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 1 });
+    const commonResults = await runTasksWithRetry(commonTasks, {
+      concurrency: CONFIG.CONCURRENCY.DEFAULT,
+      retries: 1,
+    });
     for (const r of commonResults) {
       if (r && !(r instanceof Error)) allSubdomains.push(r);
     }
 
-    // 3. Параллельный поиск через бесплатные источники
-    const [certSubdomains, hackerTargetNames, urlScanNames, alienVaultNames] = await Promise.all([
-      getSubdomainsFromCrtSh(cleanDomain),
-      getFromHackertarget(cleanDomain).catch(() => [] as string[]),
-      getFromURLScan(cleanDomain).catch(() => [] as string[]),
-      getFromAlienVault(cleanDomain).catch(() => [] as string[]),
-    ]);
+    // 3. Параллельный поиск через все 10 бесплатных источников
+    const sourceEntries: Array<{ name: string; fn: () => Promise<string[]> }> = [
+      { name: 'crt.sh', fn: () => getFromCrtSh(cleanDomain) },
+      { name: 'hackertarget', fn: () => getFromHackertarget(cleanDomain) },
+      { name: 'urlscan.io', fn: () => getFromURLScan(cleanDomain) },
+      { name: 'alienvault', fn: () => getFromAlienVault(cleanDomain) },
+      { name: 'webarchive', fn: () => getFromWebArchive(cleanDomain) },
+      { name: 'certspotter', fn: () => getFromCertSpotter(cleanDomain) },
+      { name: 'threatminer', fn: () => getFromThreatMiner(cleanDomain) },
+      { name: 'anubis', fn: () => getFromAnubis(cleanDomain) },
+      { name: 'rapiddns', fn: () => getFromRapidDNS(cleanDomain) },
+      { name: 'bufferover', fn: () => getFromBufferOver(cleanDomain) },
+    ];
+
+    const passivePromises = sourceEntries.map(async (entry) => {
+      try {
+        const names = await entry.fn();
+        const filtered = filterForDomain(names, cleanDomain);
+        if (filtered.length > 0) usedSources.add(entry.name);
+        return { source: entry.name, subdomains: filtered };
+      } catch {
+        return { source: entry.name, subdomains: [] as string[] };
+      }
+    });
+
+    const passiveResults = await Promise.all(passivePromises);
 
     // Преобразуем строки из passive sources в SubdomainInfo
-    const passiveResults: SubdomainInfo[] = [
-      ...hackerTargetNames.map(s => ({ subdomain: s, ips: [], source: 'hackertarget' })),
-      ...urlScanNames.map(s => ({ subdomain: s, ips: [], source: 'urlscan.io' })),
-      ...alienVaultNames.map(s => ({ subdomain: s, ips: [], source: 'alienvault' })),
-    ];
+    for (const result of passiveResults) {
+      for (const sub of result.subdomains) {
+        allSubdomains.push({ subdomain: sub.toLowerCase(), ips: [], source: result.source });
+      }
+    }
 
     // Объединяем результаты, избегая дубликатов
     const subdomainMap = new Map<string, SubdomainInfo>();
-    for (const sub of [...allSubdomains, ...certSubdomains, ...passiveResults]) {
+    for (const sub of allSubdomains) {
       const key = sub.subdomain.toLowerCase();
       const existing = subdomainMap.get(key);
       if (!existing) {
@@ -161,24 +293,32 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 4. Резолвим IP для всех поддоменов, у которых ips пустой
+    // 4. Определяем wildcard IP для фильтрации
+    let wildcardIps = new Set<string>();
+    if (isWildcard) {
+      const rndHost = `xz-${Math.random().toString(36).slice(2, 8)}.${cleanDomain}`;
+      const wIps = await resolve4WithFallback(rndHost).catch(() => [] as string[]);
+      wildcardIps = new Set(wIps);
+    }
+
+    // 5. Резолвим IP для всех поддоменов, у которых ips пустой (с fallback resolvers)
     const unresolvedEntries = Array.from(subdomainMap.entries()).filter(([, v]) => v.ips.length === 0);
     if (unresolvedEntries.length > 0) {
       const resolveTasks = unresolvedEntries.map(([key, info]) => async () => {
         try {
-          const ips = await dns.resolve4(info.subdomain);
-          return { key, ips };
-        } catch {
+          const ips = await resolve4WithFallback(info.subdomain);
+          if (ips.length > 0) return { key, ips };
           // Пробуем AAAA (IPv6) если A-запись не нашлась
-          try {
-            const ips6 = await dns.resolve6(info.subdomain);
-            return { key, ips: ips6 };
-          } catch {
-            return { key, ips: [] as string[] };
-          }
+          const ips6 = await resolve6WithFallback(info.subdomain);
+          return { key, ips: ips6 };
+        } catch {
+          return { key, ips: [] as string[] };
         }
       });
-      const resolved = await runTasksWithRetry(resolveTasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 1 });
+      const resolved = await runTasksWithRetry(resolveTasks, {
+        concurrency: CONFIG.CONCURRENCY.DEFAULT,
+        retries: 1,
+      });
       for (const r of resolved) {
         if (r && !(r instanceof Error) && r.ips.length > 0) {
           const entry = subdomainMap.get(r.key);
@@ -189,12 +329,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 6. Фильтрация wildcard записей (если обнаружен wildcard DNS)
+    if (isWildcard && wildcardIps.size > 0) {
+      for (const [key, entry] of subdomainMap) {
+        if (entry.ips.length > 0 && entry.ips.every(ip => wildcardIps.has(ip))) {
+          // Все IP совпадают с wildcard — вероятно, не настоящий поддомен
+          // Оставляем только если найден из нескольких источников или это common subdomain
+          if (entry.source === 'dns-bruteforce') {
+            subdomainMap.delete(key);
+          }
+        }
+      }
+    }
+
     const result: DomainCheckResult = {
       domain: cleanDomain,
-      subdomains: Array.from(subdomainMap.values()).sort((a, b) => 
+      subdomains: Array.from(subdomainMap.values()).sort((a, b) =>
         a.subdomain.localeCompare(b.subdomain)
       ),
-      total: subdomainMap.size
+      total: subdomainMap.size,
+      wildcardDetected: isWildcard,
+      sources: Array.from(usedSources).sort(),
     };
 
     // Cache aggregated result
