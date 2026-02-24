@@ -20,6 +20,14 @@ export const CONFIG = {
 
   // Cache key prefix (for easy versioning)
   CACHE_KEY_PREFIX: process.env.CACHE_KEY_PREFIX || 'v1:',
+
+  // Antifilter community list validation
+  ANTIFILTER: {
+    ENABLED: process.env.ANTIFILTER_ENABLED !== 'false', // on by default
+    DOMAINS_URL: process.env.ANTIFILTER_DOMAINS_URL || 'https://community.antifilter.download/list/domains.lst',
+    IPS_URL: process.env.ANTIFILTER_IPS_URL || 'https://community.antifilter.download/list/community.lst',
+    CACHE_TTL_MS: Number(process.env.ANTIFILTER_CACHE_TTL_MS || 3600000), // 1h
+  },
 };
 
 export default CONFIG;

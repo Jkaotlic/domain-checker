@@ -5,6 +5,7 @@ interface SubdomainInfo {
   subdomain: string;
   ips: string[];
   source: string;
+  antifilter?: boolean;
 }
 
 interface DomainInfo {
@@ -166,7 +167,8 @@ export default function Home() {
 
     if (lines.length === 0) return;
 
-    const content = lines.join('\r\n');
+    const header = `@echo off\r\nchcp 65001 >nul\r\necho Adding ${sortedIps.length} routes for ${result.domain}...\r\n`;
+    const content = header + lines.join('\r\n') + '\r\necho Done.\r\npause\r\n';
     const blob = new Blob([content], { type: 'text/plain' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -370,6 +372,11 @@ export default function Home() {
                               {sub.ips.length > 0 && (
                                 <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
                                   Активен
+                                </span>
+                              )}
+                              {sub.antifilter && (
+                                <span className="text-xs px-2 py-1 bg-red-100 text-red-700 rounded">
+                                  Antifilter
                                 </span>
                               )}
                             </div>
