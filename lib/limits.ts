@@ -36,10 +36,31 @@ const DEFAULT_WINDOW_MS = 60_000;
 // In-process buckets keyed by `${key}:${ip}`
 const buckets = new Map<string, Bucket>();
 
+const BUCKET_CLEANUP_INTERVAL_MS = 60_000;
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureCleanupTimer() {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [k, b] of buckets) {
+      // Remove buckets idle for more than 2 windows (default 2 min)
+      if (now - b.lastRefill > DEFAULT_WINDOW_MS * 2) {
+        buckets.delete(k);
+      }
+    }
+  }, BUCKET_CLEANUP_INTERVAL_MS);
+  // Allow process to exit without waiting for this timer
+  if (cleanupTimer && typeof cleanupTimer === 'object' && 'unref' in cleanupTimer) {
+    cleanupTimer.unref();
+  }
+}
+
 /**
  * Token bucket refill and consume.
  */
 function consumeFromBucket(bucketKey: string, limit: number, windowMs: number): boolean {
+  ensureCleanupTimer();
   const now = Date.now();
   const ratePerMs = limit / windowMs; // tokens per ms
 
@@ -63,9 +84,6 @@ function consumeFromBucket(bucketKey: string, limit: number, windowMs: number): 
   }
 
   buckets.set(bucketKey, b);
-
-  // Lazy cleanup: if bucket is full (tokens === limit) we could remove it to free memory.
-  // For simplicity no background GC here, but production code may prune stale entries periodically.
 
   return allowed;
 }

@@ -1,7 +1,17 @@
 import { LRUCache } from "lru-cache";
 import RedisCacheAdapter from './cache/redisAdapter';
+import { setCacheHitRatio } from './metrics';
 
 export type CacheKey = string;
+
+let _cacheHits = 0;
+let _cacheMisses = 0;
+
+function trackCacheAccess(hit: boolean) {
+  if (hit) _cacheHits++; else _cacheMisses++;
+  const total = _cacheHits + _cacheMisses;
+  if (total > 0) setCacheHitRatio(_cacheHits / total);
+}
 
 export interface CacheAdapter<K = CacheKey, V = unknown> {
   get(key: K): Promise<V | undefined>;
@@ -23,7 +33,9 @@ export class InMemoryLRUAdapter<V = unknown> implements CacheAdapter {
   }
 
   async get(key: string): Promise<V | undefined> {
-    return this.cache.get(key);
+    const val = this.cache.get(key);
+    trackCacheAccess(val !== undefined);
+    return val;
   }
 
   async set(key: string, value: V, ttlMillis?: number): Promise<void> {

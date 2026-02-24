@@ -138,15 +138,15 @@ export async function detectWildcard(domain: string): Promise<boolean> {
     // If none of the random subdomains resolve, no wildcard
     if (allTestIps.every(ips => ips.length === 0)) return false;
 
-    // If at least 2 out of 3 random subdomains resolve to the same IPs, it's wildcard
-    let matchCount = 0;
+    // All 3 random subdomains must resolve to the same non-empty IP set to confirm wildcard
+    if (allTestIps[0].length === 0) return false;
     const firstSet = new Set(allTestIps[0]);
     for (let i = 1; i < allTestIps.length; i++) {
-      if (allTestIps[i].length > 0 && allTestIps[i].every(ip => firstSet.has(ip))) {
-        matchCount++;
-      }
+      if (allTestIps[i].length === 0) return false;
+      if (allTestIps[i].length !== firstSet.size) return false;
+      if (!allTestIps[i].every(ip => firstSet.has(ip))) return false;
     }
-    return matchCount >= 1 && allTestIps[0].length > 0;
+    return true;
   } catch (err) {
     return false;
   }

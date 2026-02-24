@@ -2,6 +2,7 @@ import pLimit from './pLimit';
 import { CONFIG } from '../config';
 import logger from '../logger';
 
+const MAX_HOST_LIMIT_ENTRIES = 1000;
 const hostLimitMap = new Map<string, ReturnType<typeof pLimit>>();
 
 function getHostFromUrl(url: string): string {
@@ -15,6 +16,11 @@ function getHostFromUrl(url: string): string {
 
 function getLimitForHost(host: string) {
   if (!hostLimitMap.has(host)) {
+    // Evict oldest entry when map grows too large to prevent memory leak
+    if (hostLimitMap.size >= MAX_HOST_LIMIT_ENTRIES) {
+      const oldest = hostLimitMap.keys().next().value;
+      if (oldest !== undefined) hostLimitMap.delete(oldest);
+    }
     hostLimitMap.set(host, pLimit(CONFIG.CONCURRENCY.DEFAULT));
   }
   return hostLimitMap.get(host)!;

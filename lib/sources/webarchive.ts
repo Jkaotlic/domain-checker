@@ -1,5 +1,4 @@
-import { fetchWithRetry } from '../net/fetchWithRetry';
-import logger from '../logger';
+import { fetchSource } from './fetchSource';
 import { CONFIG } from '../config';
 
 /**
@@ -8,34 +7,23 @@ import { CONFIG } from '../config';
  */
 export async function fetchWebArchive(domain: string): Promise<string[]> {
   const url = `https://web.archive.org/cdx/search/cdx?url=*.${encodeURIComponent(domain)}/*&output=json&fl=original&collapse=urlkey&limit=10000`;
-  try {
-    const res = await fetchWithRetry(url, {
-      headers: { 'User-Agent': 'domain-checker/1.0' },
-    }, { retries: 2, backoffMs: 300, timeoutMs: CONFIG.HTTP_TIMEOUT_MS * 2 });
-    if (!res.ok) return [];
-    const json = await res.json();
-    if (!Array.isArray(json)) return [];
-    const subs = new Set<string>();
+  return fetchSource(url, (data) => {
+    if (!Array.isArray(data)) return [];
+    const hosts: string[] = [];
     // First row is header ["original"], skip it
-    for (let i = 1; i < json.length; i++) {
-      const row = json[i];
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
       const urlStr = Array.isArray(row) ? row[0] : row;
       if (typeof urlStr !== 'string') continue;
       try {
         const parsed = new URL(urlStr);
-        const host = parsed.hostname.toLowerCase();
-        if (host.endsWith(`.${domain}`) || host === domain) {
-          subs.add(host);
-        }
+        hosts.push(parsed.hostname);
       } catch {
         // ignore invalid URLs
       }
     }
-    return Array.from(subs);
-  } catch (err) {
-    logger.debug({ err, domain }, 'webarchive fetch error');
-    return [];
-  }
+    return hosts;
+  }, domain, 'webarchive', { retries: 2, backoffMs: 300, timeoutMs: CONFIG.HTTP_TIMEOUT_MS * 2 });
 }
 
 export default fetchWebArchive;

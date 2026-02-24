@@ -1,5 +1,4 @@
-import { fetchWithRetry } from '../net/fetchWithRetry';
-import logger from '../logger';
+import { fetchSource } from './fetchSource';
 import { CONFIG } from '../config';
 
 /**
@@ -9,26 +8,10 @@ import { CONFIG } from '../config';
  */
 export async function fetchAnubis(domain: string): Promise<string[]> {
   const url = `https://jldc.me/anubis/subdomains/${encodeURIComponent(domain)}`;
-  try {
-    const res = await fetchWithRetry(url, {
-      headers: { 'User-Agent': 'domain-checker/1.0' },
-    }, { retries: 2, backoffMs: 300, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
-    if (!res.ok) return [];
-    const json = await res.json();
-    if (!Array.isArray(json)) return [];
-    const subs = new Set<string>();
-    for (const entry of json) {
-      if (typeof entry !== 'string') continue;
-      const clean = entry.toLowerCase().trim();
-      if (clean.endsWith(`.${domain}`) || clean === domain) {
-        subs.add(clean);
-      }
-    }
-    return Array.from(subs);
-  } catch (err) {
-    logger.debug({ err, domain }, 'anubis fetch error');
-    return [];
-  }
+  return fetchSource(url, (data) => {
+    if (!Array.isArray(data)) return [];
+    return data.filter((e): e is string => typeof e === 'string');
+  }, domain, 'anubis', { retries: 2, backoffMs: 300, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
 }
 
 export default fetchAnubis;

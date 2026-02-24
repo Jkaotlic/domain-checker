@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as dns } from 'dns';
 import { createDefaultCache } from '../../../lib/cache';
+import logger from '../../../lib/logger';
 import runTasksWithRetry from '../../../lib/net/worker';
 import { CONFIG } from '../../../lib/config';
 
@@ -77,6 +78,7 @@ async function reverseDNSLookup(ip: string): Promise<ReverseDNSResult> {
 
 // Основной обработчик POST запроса
 export async function POST(request: NextRequest) {
+  const requestId = crypto.randomUUID();
   try {
     const body = await request.json();
     const { text, maxIPs = 100 } = body;
@@ -112,22 +114,28 @@ export async function POST(request: NextRequest) {
       return res;
     });
 
+    logger.info({ requestId, ipCount: ipsToProcess.length }, 'reverse request started');
+
     const results = await runTasksWithRetry(tasks, { concurrency: CONFIG.CONCURRENCY.DEFAULT, retries: 2 });
-    const normalizedResults = results.map(r => r instanceof Error ? { ip: '0.0.0.0', hostnames: [], error: (r as Error).message } as ReverseDNSResult : r as ReverseDNSResult);
-    
+    const normalizedResults = results.map((r, i) =>
+      r instanceof Error
+        ? { ip: ipsToProcess[i], hostnames: [], error: (r as Error).message } as ReverseDNSResult
+        : r as ReverseDNSResult
+    );
+
     // Фильтруем результаты - оставляем только те, где найдены имена
     const successfulResults = normalizedResults.filter(r => r.hostnames && r.hostnames.length > 0);
-    
+
     const response: ReverseDNSResponse = {
       results: normalizedResults,
       total: normalizedResults.length,
       successful: successfulResults.length
     };
-    
+
     return NextResponse.json(response);
-    
+
   } catch (error) {
-    console.error('Reverse DNS error:', error);
+    logger.error({ requestId, error }, 'Reverse DNS error');
     return NextResponse.json(
       { error: 'Внутренняя ошибка сервера' },
       { status: 500 }

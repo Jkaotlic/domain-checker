@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createDefaultCache } from '../../../lib/cache';
 import { CONFIG } from '../../../lib/config';
+import logger from '../../../lib/logger';
 import runTasksWithRetry from '../../../lib/net/worker';
 import {
   getFromHackertarget, getFromURLScan, getFromAlienVault,
@@ -9,11 +10,13 @@ import {
 } from '../../../lib/passiveSources';
 import { resolve4WithFallback, resolve6WithFallback, attemptZoneTransfer } from '../../../lib/dns';
 import { detectWildcard } from '../../../lib/reverse';
+import { checkAntifilter } from '../../../lib/antifilter';
 
 interface SubdomainInfo {
   subdomain: string;
   ips: string[];
   source: string;
+  antifilter?: boolean;
 }
 
 interface DomainCheckResult {
@@ -187,6 +190,7 @@ function filterForDomain(names: string[], domain: string): string[] {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = crypto.randomUUID();
   try {
     const { domain } = await request.json();
 
@@ -203,6 +207,8 @@ export async function POST(request: NextRequest) {
       .replace(/\/.*$/, '')
       .trim()
       .toLowerCase();
+
+    logger.info({ requestId, domain: cleanDomain }, 'check request started');
 
     if (!cleanDomain || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(cleanDomain)) {
       return NextResponse.json(
@@ -302,7 +308,9 @@ export async function POST(request: NextRequest) {
     }
 
     // 5. Резолвим IP для всех поддоменов, у которых ips пустой (с fallback resolvers)
-    const unresolvedEntries = Array.from(subdomainMap.entries()).filter(([, v]) => v.ips.length === 0);
+    const MAX_UNRESOLVED_TO_RESOLVE = 5000;
+    const allUnresolved = Array.from(subdomainMap.entries()).filter(([, v]) => v.ips.length === 0);
+    const unresolvedEntries = allUnresolved.slice(0, MAX_UNRESOLVED_TO_RESOLVE);
     if (unresolvedEntries.length > 0) {
       const resolveTasks = unresolvedEntries.map(([key, info]) => async () => {
         try {
@@ -333,12 +341,26 @@ export async function POST(request: NextRequest) {
     if (isWildcard && wildcardIps.size > 0) {
       for (const [key, entry] of subdomainMap) {
         if (entry.ips.length > 0 && entry.ips.every(ip => wildcardIps.has(ip))) {
-          // Все IP совпадают с wildcard — вероятно, не настоящий поддомен
-          // Оставляем только если найден из нескольких источников или это common subdomain
-          if (entry.source === 'dns-bruteforce') {
-            subdomainMap.delete(key);
+          // Все IP совпадают с wildcard — удаляем независимо от источника
+          subdomainMap.delete(key);
+        }
+      }
+    }
+
+    // 7. Antifilter community list cross-reference (optional)
+    if (CONFIG.ANTIFILTER.ENABLED) {
+      try {
+        let matched = false;
+        for (const [key, entry] of subdomainMap) {
+          const hit = await checkAntifilter(entry.subdomain, entry.ips);
+          if (hit) {
+            subdomainMap.set(key, { ...entry, antifilter: true });
+            matched = true;
           }
         }
+        if (matched) usedSources.add('antifilter');
+      } catch (err) {
+        logger.debug({ err }, 'antifilter check failed, skipping');
       }
     }
 
@@ -364,7 +386,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
 
   } catch (error) {
-    console.error('Domain check error:', error);
+    logger.error({ requestId, error }, 'Domain check error');
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : 'Ошибка при проверке домена',

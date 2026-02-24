@@ -1,5 +1,4 @@
-import { fetchWithRetry } from '../net/fetchWithRetry';
-import logger from '../logger';
+import { fetchSource } from './fetchSource';
 import { CONFIG } from '../config';
 
 /**
@@ -8,32 +7,22 @@ import { CONFIG } from '../config';
  */
 export async function fetchBufferOver(domain: string): Promise<string[]> {
   const url = `https://tls.bufferover.run/dns?q=.${encodeURIComponent(domain)}`;
-  try {
-    const res = await fetchWithRetry(url, {
-      headers: { 'User-Agent': 'domain-checker/1.0' },
-    }, { retries: 2, backoffMs: 300, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
-    if (!res.ok) return [];
-    const json = await res.json();
-    const subs = new Set<string>();
+  return fetchSource(url, (data) => {
+    const json = data as Record<string, unknown>;
     // BufferOver returns { Results: ["ip,hostname", ...] }
-    const results = json.Results || json.FDNS_A || [];
+    const results = (json.Results || json.FDNS_A || []) as unknown[];
     if (!Array.isArray(results)) return [];
+    const names: string[] = [];
     for (const line of results) {
       if (typeof line !== 'string') continue;
       // Format: "ip,hostname" or "hostname,ip"
       const parts = line.split(',');
       for (const part of parts) {
-        const clean = part.trim().toLowerCase();
-        if (clean.endsWith(`.${domain}`) || clean === domain) {
-          subs.add(clean);
-        }
+        names.push(part.trim());
       }
     }
-    return Array.from(subs);
-  } catch (err) {
-    logger.debug({ err, domain }, 'bufferover fetch error');
-    return [];
-  }
+    return names;
+  }, domain, 'bufferover', { retries: 2, backoffMs: 300, timeoutMs: CONFIG.HTTP_TIMEOUT_MS });
 }
 
 export default fetchBufferOver;

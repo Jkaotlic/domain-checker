@@ -2,6 +2,9 @@ import { fetchWithRetry } from '../net/fetchWithRetry';
 import logger from '../logger';
 import { CONFIG } from '../config';
 
+/**
+ * HackerTarget — returns CSV text, not JSON. Needs custom parsing.
+ */
 export async function fetchHackerTarget(domain: string): Promise<string[]> {
   const url = `https://api.hackertarget.com/hostsearch/?q=${encodeURIComponent(domain)}`;
   try {
