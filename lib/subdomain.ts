@@ -1,4 +1,4 @@
-import punycode from "punycode";
+import punycode from "punycode/";
 import psl from "psl";
 
 /**
@@ -26,7 +26,7 @@ export function normalizeDomain(input: string): string {
 
     // strip surrounding dots
     return ascii.replace(/^\.+|\.+$/g, "");
-  } catch (err) {
+  } catch {
     // Fallback: treat as bare host (no protocol)
     let host = s;
     // strip possible path/port if someone passed "example.com:8080/path"

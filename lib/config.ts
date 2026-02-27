@@ -1,32 +1,34 @@
 // Centralized runtime configuration for timeouts, concurrency and cache TTLs.
 // Values are read from env with sane defaults and can be overridden in tests.
 
+function envInt(name: string, fallback: number): number {
+  const v = process.env[name];
+  if (!v) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export const CONFIG = {
-  // Network timeouts (ms)
-  HTTP_TIMEOUT_MS: Number(process.env.HTTP_TIMEOUT_MS || 5000),
-  DNS_TIMEOUT_MS: Number(process.env.DNS_TIMEOUT_MS || 3000),
+  HTTP_TIMEOUT_MS: envInt('HTTP_TIMEOUT_MS', 5000),
+  DNS_TIMEOUT_MS: envInt('DNS_TIMEOUT_MS', 3000),
 
-  // Cache TTLs (milliseconds)
   TTL: {
-    PTR_MS: Number(process.env.PTR_TTL_MS || 1000 * 60 * 60), // 1h
-    A_RECORD_MS: Number(process.env.A_RECORD_TTL_MS || 1000 * 60 * 10), // 10m
-    AGGREGATED_MS: Number(process.env.AGGREGATED_TTL_MS || 1000 * 60 * 60 * 24), // 24h
+    PTR_MS: envInt('PTR_TTL_MS', 1000 * 60 * 60),          // 1h
+    A_RECORD_MS: envInt('A_RECORD_TTL_MS', 1000 * 60 * 10), // 10m
+    AGGREGATED_MS: envInt('AGGREGATED_TTL_MS', 1000 * 60 * 60 * 24), // 24h
   },
 
-  // Concurrency defaults
   CONCURRENCY: {
-    DEFAULT: Number(process.env.CONCURRENCY_DEFAULT || 10),
+    DEFAULT: envInt('CONCURRENCY_DEFAULT', 10),
   },
 
-  // Cache key prefix (for easy versioning)
   CACHE_KEY_PREFIX: process.env.CACHE_KEY_PREFIX || 'v1:',
 
-  // Antifilter community list validation
   ANTIFILTER: {
-    ENABLED: process.env.ANTIFILTER_ENABLED !== 'false', // on by default
+    ENABLED: process.env.ANTIFILTER_ENABLED !== 'false',
     DOMAINS_URL: process.env.ANTIFILTER_DOMAINS_URL || 'https://community.antifilter.download/list/domains.lst',
     IPS_URL: process.env.ANTIFILTER_IPS_URL || 'https://community.antifilter.download/list/community.lst',
-    CACHE_TTL_MS: Number(process.env.ANTIFILTER_CACHE_TTL_MS || 3600000), // 1h
+    CACHE_TTL_MS: envInt('ANTIFILTER_CACHE_TTL_MS', 3600000),
   },
 };
 

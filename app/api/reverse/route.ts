@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { promises as dns } from 'dns';
 import { createDefaultCache } from '../../../lib/cache';
 import logger from '../../../lib/logger';
+import { rateLimit } from '../../../lib/limits';
 import runTasksWithRetry from '../../../lib/net/worker';
 import { CONFIG } from '../../../lib/config';
 
@@ -67,7 +68,7 @@ async function reverseDNSLookup(ip: string): Promise<ReverseDNSResult> {
       ip,
       hostnames: hostnames.filter(h => h && h.trim().length > 0)
     };
-  } catch (error) {
+  } catch {
     return {
       ip,
       hostnames: [],
@@ -76,9 +77,18 @@ async function reverseDNSLookup(ip: string): Promise<ReverseDNSResult> {
   }
 }
 
-// Основной обработчик POST запроса
+// Module-level cache singleton
+const reverseCache = createDefaultCache<ReverseDNSResult>();
+
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID();
+
+  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  const allowed = await rateLimit(clientIp, 'reverse-api');
+  if (!allowed) {
+    return NextResponse.json({ error: 'Слишком много запросов' }, { status: 429 });
+  }
+
   try {
     const body = await request.json();
     const { text, maxIPs = 100 } = body;
@@ -104,13 +114,12 @@ export async function POST(request: NextRequest) {
     const ipsToProcess = ips.slice(0, maxIPs);
     
     // Выполняем reverse DNS lookup для всех IP адресов с контролируемой параллельностью и кэшом
-    const cache = createDefaultCache<ReverseDNSResult>();
     const tasks: Array<() => Promise<ReverseDNSResult>> = ipsToProcess.map((ip) => async () => {
       const key = `reverse:${ip}`;
-      const cached = await cache.get(key);
+      const cached = await reverseCache.get(key);
       if (cached) return cached;
       const res = await reverseDNSLookup(ip);
-      await cache.set(key, res, CONFIG.TTL.PTR_MS);
+      await reverseCache.set(key, res, CONFIG.TTL.PTR_MS);
       return res;
     });
 

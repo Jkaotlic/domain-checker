@@ -84,7 +84,7 @@ export function computeScore(
   // P: PTR evidence — look for explicit metadata or tags indicating PTR match
   let P = 0;
   for (const s of entry.sources || []) {
-    const meta = s && (s as any).metadata;
+    const meta = s && (s as unknown as Record<string, unknown>).metadata as Record<string, unknown> | undefined;
     if (meta && (meta.ptr === true || meta.ptrMatch === true || meta.ptrMatched === true)) {
       P = 1;
       break;

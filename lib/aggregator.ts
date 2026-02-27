@@ -2,12 +2,10 @@ import { SubdomainEntry, SourceRecord } from "./types";
 import { createDefaultCache } from "./cache";
 import { normalizeDomain } from "./subdomain";
 
-type Key = string;
-
 const cache = createDefaultCache<SubdomainEntry>();
 
-// Simple in-memory dedupe promise map per key
-const inFlightMap = new Map<Key, Promise<SubdomainEntry>>();
+// Per-key mutex to serialize concurrent upserts for the same host
+const inFlightMap = new Map<string, Promise<SubdomainEntry>>();
 
 /**
  * Merge two SubdomainEntry objects.
@@ -94,15 +92,12 @@ export function mergeSubdomainEntries(
  * Keying by normalized host.
  */
 export async function upsertSubdomain(entry: SubdomainEntry): Promise<SubdomainEntry> {
-  const hostKey = normalizeDomain(entry.host);
-  const key = hostKey;
+  const key = normalizeDomain(entry.host);
 
-  const existingPromise = inFlightMap.get(key);
-  if (existingPromise) {
-    return existingPromise;
-  }
+  // Wait for any in-flight operation on the same key, then run ours
+  const prev = inFlightMap.get(key) ?? Promise.resolve(null as SubdomainEntry | null);
 
-  const op = (async (): Promise<SubdomainEntry> => {
+  const op = prev.catch(() => null).then(async () => {
     try {
       const existing = (await cache.get(key)) ?? null;
       const merged = mergeSubdomainEntries(existing as SubdomainEntry | null, {
@@ -112,9 +107,10 @@ export async function upsertSubdomain(entry: SubdomainEntry): Promise<SubdomainE
       await cache.set(key, merged);
       return merged;
     } finally {
-      inFlightMap.delete(key);
+      // Only clear if we are still the latest operation
+      if (inFlightMap.get(key) === op) inFlightMap.delete(key);
     }
-  })();
+  });
 
   inFlightMap.set(key, op);
   return op;

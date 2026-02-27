@@ -11,9 +11,9 @@ describe('antifilter CIDR utilities', () => {
       expect(ipv4ToInt('10.0.0.1')).toBe(167772161);
     });
 
-    test('returns 0 for invalid input', () => {
-      expect(ipv4ToInt('invalid')).toBe(0);
-      expect(ipv4ToInt('1.2.3')).toBe(0);
+    test('returns null for invalid input', () => {
+      expect(ipv4ToInt('invalid')).toBeNull();
+      expect(ipv4ToInt('1.2.3')).toBeNull();
     });
   });
 

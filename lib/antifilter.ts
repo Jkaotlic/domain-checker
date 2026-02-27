@@ -14,10 +14,16 @@ interface CIDRRange {
 
 // ── IPv4 helpers ──
 
-export function ipv4ToInt(ip: string): number {
+export function ipv4ToInt(ip: string): number | null {
   const parts = ip.split('.');
-  if (parts.length !== 4) return 0;
-  return parts.reduce((acc, octet) => (acc << 8) + (parseInt(octet, 10) & 0xff), 0) >>> 0;
+  if (parts.length !== 4) return null;
+  let result = 0;
+  for (const p of parts) {
+    const n = parseInt(p, 10);
+    if (isNaN(n) || n < 0 || n > 255 || String(n) !== p) return null;
+    result = (result << 8) + n;
+  }
+  return result >>> 0;
 }
 
 export function parseCIDR(cidr: string): CIDRRange | null {
@@ -25,19 +31,21 @@ export function parseCIDR(cidr: string): CIDRRange | null {
   if (slash === -1) {
     // bare IP → /32
     const ip = ipv4ToInt(cidr.trim());
-    return ip ? { network: ip, mask: 0xffffffff } : null;
+    if (ip === null) return null;
+    return { network: ip, mask: 0xffffffff };
   }
   const ipPart = cidr.slice(0, slash).trim();
   const bits = parseInt(cidr.slice(slash + 1).trim(), 10);
   if (isNaN(bits) || bits < 0 || bits > 32) return null;
   const ip = ipv4ToInt(ipPart);
+  if (ip === null) return null;
   const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
   return { network: (ip & mask) >>> 0, mask };
 }
 
 export function isIPInRanges(ip: string, ranges: CIDRRange[]): boolean {
   const ipInt = ipv4ToInt(ip);
-  if (ipInt === 0) return false;
+  if (ipInt === null) return false;
   for (const r of ranges) {
     if (((ipInt & r.mask) >>> 0) === r.network) return true;
   }

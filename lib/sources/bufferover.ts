@@ -15,10 +15,10 @@ export async function fetchBufferOver(domain: string): Promise<string[]> {
     const names: string[] = [];
     for (const line of results) {
       if (typeof line !== 'string') continue;
-      // Format: "ip,hostname" or "hostname,ip"
+      // Format: "ip,hostname"
       const parts = line.split(',');
-      for (const part of parts) {
-        names.push(part.trim());
+      if (parts.length >= 2) {
+        names.push(parts[1].trim()); // hostname is the second part
       }
     }
     return names;

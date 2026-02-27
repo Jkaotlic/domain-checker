@@ -1,146 +1,133 @@
 # Domain Checker
 
-Domain Checker — лёгкий сервис на Next.js для валидации доменов, нормализации и оценки поддоменов, а также для обратного анализа (reverse lookup) по IP и хостам. Проект ориентирован на корректность, покрытие тестами и компактное, компонуемое ядро с опциональным кэшем на Redis для общего состояния.
+Next.js-сервис для обнаружения поддоменов и обратного DNS-анализа. Агрегирует данные из **10 бесплатных OSINT-источников** (crt.sh, AlienVault OTX, HackerTarget, URLScan, Web Archive, CertSpotter, ThreatMiner, Anubis, RapidDNS, BufferOver), DNS brute-force (~500 популярных имён), зонных трансферов и reverse DNS lookups.
 
-## Основные возможности
-- Быстрая валидация и оценка доменов и поддоменов
-- Reverse DNS lookup по спискам IP, извлечённым из произвольного текста
-- LRU-кеш в памяти с опциональным адаптером для Redis
-- TypeScript + Jest: тесты маленькие и удобные для аудита
+## Возможности
+
+- Поиск поддоменов через 10 пассивных OSINT-источников (без API-ключей)
+- DNS brute-force ~500 популярных поддоменов с fallback на публичные DNS (Google, Cloudflare, Quad9)
+- Детекция wildcard DNS и фильтрация ложных результатов
+- Reverse DNS (IP → домен) с поддержкой файлов и команд `route add`
+- Валидация через [Antifilter community lists](https://community.antifilter.download/) (опционально)
+- Экспорт: субдомены TXT, IP-адреса TXT, статические маршруты Keenetic (.bat)
+- Rate limiting (Redis fixed-window / in-memory token bucket)
+- Кеширование: Redis (ioredis) или in-memory LRU
+- Prometheus метрики (`prom-client`)
+- Docker + docker-compose (app + Redis)
 
 ## Быстрый старт
 
 ### Требования
-- Node.js 18+ (LTS)
-- npm
-- Необязательно: Redis (при использовании общего кэша)
 
-### Установка
+- Node.js 20+ (LTS)
+- npm
+- Опционально: Redis
+
+### Установка и запуск
 
 ```bash
 npm ci
+npm run dev       # dev-сервер на http://localhost:3000
 ```
 
-### Запуск в режиме разработки
-
-```bash
-npm run dev
-```
-
-### Сборка и запуск в продакшн
+### Production
 
 ```bash
 npm run build
 npm start
 ```
 
-### Тесты
-
-```bash
-npm test
-```
-
-## Запуск в Docker (рекомендованный для локального тестирования)
-
-Добавлены `Dockerfile` и `docker-compose.yml` для быстрого поднятия сервиса локально вместе с Redis.
-
-Сборка образа и запуск контейнеров:
+### Docker
 
 ```bash
 docker compose up --build
+# Приложение: http://localhost:3000
+# Redis поднимается автоматически
 ```
 
-После запуска приложение будет доступно на `http://localhost:3000`. Redis автоматически поднимается в отдельном контейнере и доступен по URL `redis://redis:6379` внутри compose-сети; `REDIS_URL` уже выставлен в `docker-compose.yml`.
-
-Если хотите запустить только контейнер приложения без Redis, удалите или измените `REDIS_URL` в `docker-compose.yml` или используйте `docker build` и `docker run` напрямую:
+Без Redis:
 
 ```bash
-docker build -t domain-checker:local .
-docker run -p 3000:3000 --env NODE_ENV=production domain-checker:local
+docker build -t domain-checker .
+docker run -p 3000:3000 -e NODE_ENV=production domain-checker
 ```
 
-
-## Конфигурация (переменные окружения)
-
-- `REDIS_URL` — опционально. При заданной переменной приложение попытается подключиться к Redis (используется `ioredis`). При недоступности Redis выполняется fallback на встроенный LRU-кеш в памяти.
-- `REDIS_PASSWORD` — пароль Redis (опционально).
-- `LOG_LEVEL` — уровень логирования (по умолчанию `info`).
-- `NODE_ENV` — `development` или `production`.
-- `PORT` — порт для сервера в продакшн.
-
-Дополнительные настройки (таймауты / TTL / concurrency) настраиваются в `lib/config.ts` и могут быть переопределены через env:
-
-- `HTTP_TIMEOUT_MS` (по умолчанию ~5000)
-- `DNS_TIMEOUT_MS` (по умолчанию ~3000)
-- `PTR_TTL_MS` (по умолчанию ~3600000)
-- `A_RECORD_TTL_MS` (по умолчанию ~600000)
-- `AGGREGATED_TTL_MS` (по умолчанию ~86400000)
-- `CONCURRENCY_DEFAULT` (по умолчанию ~10)
-- `CACHE_KEY_PREFIX` (по умолчанию `v1:`)
-
-## API endpoints
-
-Все эндпоинты доступны под `/api` при запуске приложения.
-
-`POST /api/check`
-- Тело (JSON): `{ "domain": "string" }`
-- Возвращает оценку и анализ по домену.
-
-Пример:
+### Тесты
 
 ```bash
-curl -sS -X POST http://localhost:3000/api/check \
+npm test                            # все тесты
+npx jest __tests__/score.test.ts    # один файл
+npm run ci                          # lint + typecheck + test
+```
+
+## API
+
+### POST /api/check
+
+Полный анализ домена: wildcard-детекция, brute-force, 10 пассивных источников, резолв IP, antifilter.
+
+```bash
+curl -X POST http://localhost:3000/api/check \
   -H 'Content-Type: application/json' \
-  -d '{"domain":"www.example.com"}'
+  -d '{"domain":"example.com"}'
 ```
 
-`POST /api/reverse`
-- Тело (JSON): `{ "text": "string", "maxIPs?: number" }`
-  - `text` — произвольный текст, содержащий IP-адреса (новые строки и произвольные команды допускаются).
-  - `maxIPs` — опционально: предел числа IP для обработки (по умолчанию ~100).
-- Возвращает: результаты обратного DNS (reverse DNS) для каждого обнаруженного IP в `text`.
-
-Пример запроса:
-
-```bash
-curl -sS -X POST http://localhost:3000/api/reverse \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"93.184.216.34\n8.8.8.8","maxIPs":10}'
-```
-
-Пример ответа:
+Ответ:
 
 ```json
-[
-  {"ip":"93.184.216.34","hostnames":["www.example.com"],"error":null},
-  {"ip":"8.8.8.8","hostnames":["dns.google"],"error":null}
-]
+{
+  "domain": "example.com",
+  "subdomains": [
+    { "subdomain": "www.example.com", "ips": ["93.184.216.34"], "source": "dns-bruteforce" }
+  ],
+  "total": 1,
+  "wildcardDetected": false,
+  "sources": ["crt.sh", "dns-bruteforce"]
+}
 ```
 
-## Заметки для разработчиков
+### POST /api/reverse
 
-- Основная логика находится в `lib/` — смотрите `score.ts`, `subdomain.ts`, `reverse.ts`, `aggregator.ts`.
-- Тесты расположены в `__tests__/` и запускаются через Jest (`npm test`).
-- В проекте есть конфигурация ESLint; CI запускает линтер, если присутствует скрипт `lint`.
+Reverse DNS по списку IP (из текста, файлов, команд `route add`).
 
-## Вклад в проект
+```bash
+curl -X POST http://localhost:3000/api/reverse \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"8.8.8.8\n1.1.1.1","maxIPs":10}'
+```
 
-1. Форкните репозиторий и создайте ветку темы.
-2. Добавьте тесты для ваших изменений и держите изменения минимальными.
-3. Откройте pull request с понятным описанием и ссылкой на связанные issue.
+## Конфигурация
+
+Все env-переменные опциональны (есть дефолты в `lib/config.ts`):
+
+| Переменная | Default | Описание |
+|---|---|---|
+| `REDIS_URL` | — | Redis connection URL |
+| `REDIS_PASSWORD` | — | Redis password |
+| `HTTP_TIMEOUT_MS` | `5000` | Таймаут HTTP-запросов |
+| `DNS_TIMEOUT_MS` | `3000` | Таймаут DNS-запросов |
+| `CONCURRENCY_DEFAULT` | `10` | Параллельность задач |
+| `ANTIFILTER_ENABLED` | `true` | Antifilter community list проверка |
+
+## Архитектура
+
+```
+app/
+  api/check/route.ts     — POST /api/check
+  api/reverse/route.ts   — POST /api/reverse
+  page.tsx               — UI (React)
+lib/
+  sources/               — 10 пассивных OSINT-источников
+  net/                   — fetchWithRetry, pLimit, worker, timeout
+  dns.ts                 — DNS resolve с fallback
+  reverse.ts             — PTR lookup + crt.sh fallback
+  antifilter.ts          — Antifilter CIDR/domain проверка
+  cache.ts               — CacheAdapter (LRU / Redis)
+  config.ts              — Централизованная конфигурация
+  limits.ts              — Rate limiting
+  metrics.ts             — Prometheus метрики
+```
 
 ## Лицензия
 
-Проект распространяется под лицензией MIT — см. `LICENSE`.
-
-## Рекомендуемые теги GitHub
-
-`domain-validation`, `nextjs`, `typescript`, `dns`, `redis`, `api`
-
-## Краткое описание для `package.json`
-
-"Небольшой сервис на Next.js для валидации доменов и обратного анализа поддоменов."
-
-## Техническая документация
-
-Подробная техническая документация для разработчиков доступна в файле: [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md)
+MIT

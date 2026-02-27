@@ -28,7 +28,9 @@ export async function runTasksWithRetry<T>(
     }
   }
 
-  const ps = tasks.map((t) => limit(() => execWithRetry(t).catch((e) => e)));
+  const ps = tasks.map((t) => limit(() =>
+    execWithRetry(t).catch((e) => e instanceof Error ? e : new Error(String(e)))
+  ));
   return Promise.all(ps);
 }
 

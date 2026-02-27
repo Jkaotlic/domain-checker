@@ -9,7 +9,7 @@ function getHostFromUrl(url: string): string {
   try {
     const u = new URL(url);
     return u.host;
-  } catch (e) {
+  } catch {
     return 'default';
   }
 }
@@ -49,30 +49,31 @@ async function execWithRetry(url: string, init: RequestInit | undefined, cfg: { 
     attempt++;
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), cfg.timeoutMs);
-        try {
-      const res = await fetchFn(url, { ...(init || {}), signal: controller.signal } as any);
+    try {
+      const res = await fetchFn(url, { ...(init || {}), signal: controller.signal } as RequestInit);
       clearTimeout(id);
       if (res.status === 429) {
-        // rate limited - respect Retry-After if present
         const ra = res.headers.get('retry-after');
         const delay = ra ? parseRetryAfter(ra) : cfg.base * Math.pow(2, attempt - 1);
-        if (attempt >= cfg.retries) return res; // last attempt, return 429
+        if (attempt >= cfg.retries) return res;
+        await res.text().catch(() => {}); // drain body to free socket
         logger.debug({ url, attempt, status: res.status, delay }, 'fetchWithRetry received 429, backing off');
         await delayMs(delay);
         continue;
       }
       if (res.status >= 500) {
         if (attempt >= cfg.retries) return res;
+        await res.text().catch(() => {}); // drain body to free socket
         const delay = cfg.base * Math.pow(2, attempt - 1);
         logger.debug({ url, attempt, status: res.status, delay }, 'fetchWithRetry received 5xx, retrying');
         await delayMs(delay);
         continue;
       }
       return res;
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearTimeout(id);
       // AbortError or network errors
-      if (err.name === 'AbortError') {
+      if (err instanceof Error && err.name === 'AbortError') {
         logger.debug({ url, attempt }, 'fetchWithRetry request aborted');
       } else {
         logger.debug({ url, attempt, err }, 'fetchWithRetry network error');
@@ -99,11 +100,11 @@ function parseRetryAfter(val: string): number {
   return 1000;
 }
 
-let _cachedFetch: any | null = null;
-async function resolveFetch() {
+let _cachedFetch: typeof globalThis.fetch | null = null;
+async function resolveFetch(): Promise<typeof globalThis.fetch> {
   if (_cachedFetch) return _cachedFetch;
-  if ((globalThis as any).fetch) {
-    _cachedFetch = (globalThis as any).fetch.bind(globalThis);
+  if (globalThis.fetch) {
+    _cachedFetch = globalThis.fetch.bind(globalThis);
     return _cachedFetch;
   }
   // Prefer using the runtime-provided global `fetch` (Next.js / Node 18+).

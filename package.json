@@ -1,22 +1,22 @@
 {
   "name": "domain-checker",
   "version": "0.1.0",
-  "description": "Small Next.js service for domain validation and subdomain reverse lookups.",
+  "description": "Next.js service for subdomain discovery via 10 free OSINT sources, DNS brute-force, zone transfers, and reverse DNS lookups.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/<your-org-or-username>/domain-checker.git"
+    "url": "https://github.com/Jkaotlic/domain-checker.git"
   },
-  "homepage": "https://github.com/<your-org-or-username>/domain-checker#readme",
+  "homepage": "https://github.com/Jkaotlic/domain-checker#readme",
   "bugs": {
-    "url": "https://github.com/<your-org-or-username>/domain-checker/issues"
+    "url": "https://github.com/Jkaotlic/domain-checker/issues"
   },
   "keywords": [
-    "domain-validation",
+    "subdomain-discovery",
+    "osint",
+    "dns-bruteforce",
+    "reverse-dns",
     "nextjs",
-    "typescript",
-    "dns",
-    "redis",
-    "api"
+    "typescript"
   ],
   "private": true,
   "scripts": {
@@ -37,6 +37,7 @@
     "pino": "^10.3.0",
     "prom-client": "^15.0.0",
     "psl": "^1.15.0",
+    "punycode": "^2.3.1",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },

@@ -55,7 +55,7 @@ export default function Home() {
       });
       const data = await res.json();
       setResult(data);
-    } catch (error) {
+    } catch {
       setResult({ domain, subdomains: [], total: 0, error: 'Ошибка подключения' });
     } finally {
       setLoading(false);

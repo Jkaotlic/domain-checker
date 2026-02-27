@@ -49,6 +49,7 @@ Docker: `docker-compose up --build` (starts app + Redis)
 - **`fetchWithRetry.ts`** — HTTP fetch with exponential backoff (200ms base, 3 retries), per-host concurrency limiting, respects `Retry-After`.
 - **`pLimit.ts`** — Minimal concurrency limiter (custom p-limit replacement).
 - **`worker.ts`** — Task runner with configurable concurrency and retries.
+- **`timeout.ts`** — Shared `withTimeout(promise, ms)` utility used by DNS and reverse lookups.
 
 ### Caching (`lib/cache.ts`, `lib/redisAdapter.ts`)
 
@@ -83,3 +84,12 @@ Defined in `lib/config.ts`, all optional:
 ## Testing
 
 Jest with ts-jest, test environment: node. Tests are in `__tests__/`. The setup file is `jest.setup.ts`. Tests cover scoring logic, domain normalization, cache behavior, passive sources, and both API routes.
+
+## MCP Servers
+
+The following MCP servers are available and should be used when appropriate:
+
+- **context7** (`@upstash/context7-mcp`) — Fetches up-to-date documentation and code examples for libraries and frameworks. Use when you need accurate API references for project dependencies (Next.js, ioredis, prom-client, psl, etc.) instead of relying on training data.
+- **playwright** (`@anthropic-ai/mcp-server-playwright`) — Browser automation for testing the UI. Use for end-to-end testing of the domain checker web interface (form submission, results rendering, export buttons).
+- **sequential-thinking** (`@anthropic-ai/mcp-server-sequential-thinking`) — Structured step-by-step reasoning. Use for complex debugging sessions, architectural decisions, or multi-step refactoring where careful analysis is needed.
+- **github** (`@anthropic-ai/mcp-server-github`) — GitHub API operations (issues, PRs, releases, repo settings). Use for repository management tasks like creating issues, reviewing PRs, or managing releases.

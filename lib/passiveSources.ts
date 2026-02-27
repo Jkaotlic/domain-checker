@@ -19,21 +19,3 @@ export {
   fetchCrtSh, fetchWebArchive, fetchCertSpotter,
   fetchThreatMiner, fetchAnubis, fetchRapidDNS, fetchBufferOver,
 };
-
-export async function getFromURLScan(domain: string) { return fetchURLScan(domain); }
-export async function getFromHackertarget(domain: string) { return fetchHackerTarget(domain); }
-export async function getFromAlienVault(domain: string) { return fetchAlienVault(domain); }
-export async function getFromCrtSh(domain: string) { return fetchCrtSh(domain); }
-export async function getFromWebArchive(domain: string) { return fetchWebArchive(domain); }
-export async function getFromCertSpotter(domain: string) { return fetchCertSpotter(domain); }
-export async function getFromThreatMiner(domain: string) { return fetchThreatMiner(domain); }
-export async function getFromAnubis(domain: string) { return fetchAnubis(domain); }
-export async function getFromRapidDNS(domain: string) { return fetchRapidDNS(domain); }
-export async function getFromBufferOver(domain: string) { return fetchBufferOver(domain); }
-
-const passiveSources = {
-  getFromURLScan, getFromHackertarget, getFromAlienVault,
-  getFromCrtSh, getFromWebArchive, getFromCertSpotter,
-  getFromThreatMiner, getFromAnubis, getFromRapidDNS, getFromBufferOver,
-};
-export default passiveSources;

@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createDefaultCache } from '../../../lib/cache';
 import { CONFIG } from '../../../lib/config';
 import logger from '../../../lib/logger';
+import { rateLimit } from '../../../lib/limits';
 import runTasksWithRetry from '../../../lib/net/worker';
 import {
-  getFromHackertarget, getFromURLScan, getFromAlienVault,
-  getFromCrtSh, getFromWebArchive, getFromCertSpotter,
-  getFromThreatMiner, getFromAnubis, getFromRapidDNS, getFromBufferOver,
+  fetchHackerTarget, fetchURLScan, fetchAlienVault,
+  fetchCrtSh, fetchWebArchive, fetchCertSpotter,
+  fetchThreatMiner, fetchAnubis, fetchRapidDNS, fetchBufferOver,
 } from '../../../lib/passiveSources';
 import { resolve4WithFallback, resolve6WithFallback, attemptZoneTransfer } from '../../../lib/dns';
 import { detectWildcard } from '../../../lib/reverse';
@@ -189,10 +190,28 @@ function filterForDomain(names: string[], domain: string): string[] {
   });
 }
 
+// Module-level cache singleton (not per-request)
+const resultCache = createDefaultCache<DomainCheckResult>();
+
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID();
+
+  // Rate limiting
+  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  const allowed = await rateLimit(clientIp, 'check-api');
+  if (!allowed) {
+    return NextResponse.json({ error: 'Слишком много запросов' }, { status: 429 });
+  }
+
+  let body: Record<string, unknown>;
   try {
-    const { domain } = await request.json();
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Невалидный JSON' }, { status: 400 });
+  }
+
+  try {
+    const domain = body.domain;
 
     if (!domain || typeof domain !== 'string') {
       return NextResponse.json(
@@ -252,16 +271,16 @@ export async function POST(request: NextRequest) {
 
     // 3. Параллельный поиск через все 10 бесплатных источников
     const sourceEntries: Array<{ name: string; fn: () => Promise<string[]> }> = [
-      { name: 'crt.sh', fn: () => getFromCrtSh(cleanDomain) },
-      { name: 'hackertarget', fn: () => getFromHackertarget(cleanDomain) },
-      { name: 'urlscan.io', fn: () => getFromURLScan(cleanDomain) },
-      { name: 'alienvault', fn: () => getFromAlienVault(cleanDomain) },
-      { name: 'webarchive', fn: () => getFromWebArchive(cleanDomain) },
-      { name: 'certspotter', fn: () => getFromCertSpotter(cleanDomain) },
-      { name: 'threatminer', fn: () => getFromThreatMiner(cleanDomain) },
-      { name: 'anubis', fn: () => getFromAnubis(cleanDomain) },
-      { name: 'rapiddns', fn: () => getFromRapidDNS(cleanDomain) },
-      { name: 'bufferover', fn: () => getFromBufferOver(cleanDomain) },
+      { name: 'crt.sh', fn: () => fetchCrtSh(cleanDomain) },
+      { name: 'hackertarget', fn: () => fetchHackerTarget(cleanDomain) },
+      { name: 'urlscan.io', fn: () => fetchURLScan(cleanDomain) },
+      { name: 'alienvault', fn: () => fetchAlienVault(cleanDomain) },
+      { name: 'webarchive', fn: () => fetchWebArchive(cleanDomain) },
+      { name: 'certspotter', fn: () => fetchCertSpotter(cleanDomain) },
+      { name: 'threatminer', fn: () => fetchThreatMiner(cleanDomain) },
+      { name: 'anubis', fn: () => fetchAnubis(cleanDomain) },
+      { name: 'rapiddns', fn: () => fetchRapidDNS(cleanDomain) },
+      { name: 'bufferover', fn: () => fetchBufferOver(cleanDomain) },
     ];
 
     const passivePromises = sourceEntries.map(async (entry) => {
@@ -376,11 +395,9 @@ export async function POST(request: NextRequest) {
 
     // Cache aggregated result
     try {
-      const cache = createDefaultCache<DomainCheckResult>();
-      const key = `check:${cleanDomain}`;
-      await cache.set(key, result, CONFIG.TTL.AGGREGATED_MS);
+      await resultCache.set(`check:${cleanDomain}`, result, CONFIG.TTL.AGGREGATED_MS);
     } catch (e) {
-      console.warn('cache set failed', e);
+      logger.warn({ err: e }, 'cache set failed');
     }
 
     return NextResponse.json(result);
